@@ -17,7 +17,7 @@ export async function montarContexto(empresaId: string, execucaoId: string = ran
   const u = usuarioSistema(empresaId);
   const f = lerFiltros({ periodo: "7d" });
 
-  const [kpis, tendencia, rotas, ranking, emRisco, porTipo, porRegiao, tipos, abertos, prf, calc] = await Promise.all([
+  const [kpis, tendencia, rotas, ranking, emRisco, porTipo, porRegiao, tipos, abertos, prf, calc, acidentes] = await Promise.all([
     dashboard.kpis(u, f),
     dashboard.tendenciaTurno(u, f),
     dashboard.rotas(u, f),
@@ -62,7 +62,15 @@ export async function montarContexto(empresaId: string, execucaoId: string = ran
     `,
     dashboard.prfFaixaHoraria(f, {}),
     roi.calcular(empresaId),
+    sql`
+      SELECT i.ocorrido_em, i.relacionado_sonolencia, i.descricao, m.codigo,
+             to_char(i.ocorrido_em AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') AS hora_local
+        FROM silver.incidentes i LEFT JOIN silver.motoristas m ON m.id = i.motorista_id
+       WHERE i.empresa_id = ${empresaId} AND i.origem = 'interno' AND i.ocorrido_em >= now() - interval '12 months'
+       ORDER BY i.ocorrido_em DESC
+    `,
   ]);
+  const sonoFrota = acidentes.filter((a) => a.relacionado_sonolencia);
 
   const sonoPesados = prf.carregada ? prf.faixas.reduce((a, x) => a + (x.acidentesSono as number), 0) : 0;
   const madrugadaPrf = prf.carregada ? prf.faixas.find((x) => x.faixa === "madrugada")?.percentualSono ?? null : null;
@@ -136,6 +144,18 @@ export async function montarContexto(empresaId: string, execucaoId: string = ran
       graves30d: calc.alertasAtendidos30d.graves,
       atendidos30d: calc.alertasAtendidos30d.atendidos,
       percentual: arred(calc.alertasAtendidos30d.percentual, 0),
+    },
+    acidentesFrota: {
+      total12m: acidentes.length,
+      porSono12m: sonoFrota.length,
+      ultimoPorSono: sonoFrota[0]
+        ? {
+            codigo: sonoFrota[0].codigo as string | null,
+            quando: new Date(sonoFrota[0].ocorrido_em as string).toISOString(),
+            horaLocal: sonoFrota[0].hora_local as string,
+            descricao: sonoFrota[0].descricao as string | null,
+          }
+        : null,
     },
   };
 }

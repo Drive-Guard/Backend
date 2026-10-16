@@ -144,6 +144,13 @@ describe("motoristas e alertas", () => {
     const lista = corpoJson(await motoristas(evento("GET /motoristas/ao-vivo")));
     const r = await motoristas(evento("POST /motoristas/{id}/ocorrencias", { params: { id: lista[0].motoristaId }, corpo: { descricao: "Motorista relatou sonolência e parou no posto", relacionadoSonolencia: true } }));
     expect(r.statusCode).toBe(201);
+
+    // Aparece no detalhe do motorista e vira insight (acidente por sono recente).
+    const det = corpoJson(await motoristas(evento("GET /motoristas/{id}", { params: { id: lista[0].motoristaId } })));
+    expect(det.ocorrencias[0]).toMatchObject({ relacionadoSonolencia: true, descricao: "Motorista relatou sonolência e parou no posto" });
+    const ins = corpoJson(await motoristas(evento("GET /motoristas/{id}/insights", { params: { id: lista[0].motoristaId } })));
+    expect(ins.some((i: { titulo: string }) => i.titulo === "Acidente por sono nos últimos 90 dias")).toBe(true);
+
     const ruim = await motoristas(evento("POST /motoristas/{id}/acoes", { params: { id: lista[0].motoristaId }, corpo: { tipo: "xyz" } }));
     expect(ruim.statusCode).toBe(400);
     expect(corpoJson(ruim).detalhes[0].mensagem).toMatch(/[Oo]pção|inválid/);

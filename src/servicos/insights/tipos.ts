@@ -48,6 +48,12 @@ export interface ContextoInsights {
   prf: { janelaAte: string; acidentesSonoPesados: number; madrugadaPercentual: number | null } | null;
   roi: { disponivel: boolean; acidentesEvitadosAno: number | null; custoEvitadoAno: number | null; reducaoPercentual: number | null } | null;
   atendimento: { graves30d: number; atendidos30d: number; percentual: number | null };
+  /** Acidentes da própria frota (não os da PRF) nos últimos 12 meses. */
+  acidentesFrota: {
+    total12m: number;
+    porSono12m: number;
+    ultimoPorSono: { codigo: string | null; quando: string; horaLocal: string; descricao: string | null } | null;
+  };
 }
 
 export const SEVERIDADES = ["baixa", "media", "alta", "critica"] as const;

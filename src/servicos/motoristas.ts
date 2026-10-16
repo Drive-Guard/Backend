@@ -57,11 +57,17 @@ export async function aoVivo(u: Usuario, f: Filtros) {
 export async function detalhe(u: Usuario, id: string) {
   uuid.parse(id);
   const sql = db();
-  const [[r], [vivo], [frota]] = await Promise.all([
+  const [[r], [vivo], [frota], ocorrencias] = await Promise.all([
     sql`SELECT * FROM gold.mv_ranking_motoristas WHERE motorista_id = ${id} AND empresa_id = ${u.empresaId}`,
     sql`SELECT * FROM gold.vw_frota_agora WHERE motorista_id = ${id} AND empresa_id = ${u.empresaId}`,
     sql`SELECT ROUND(AVG(score_fadiga_medio), 1) AS media FROM gold.mv_ranking_motoristas
          WHERE empresa_id = ${u.empresaId} AND score_fadiga_medio IS NOT NULL`,
+    // Acidentes e ocorrências da própria frota (não os da PRF), mais recentes primeiro.
+    sql`SELECT id, ocorrido_em, gravidade::text AS gravidade, causa, tipo_acidente, municipio, uf,
+               relacionado_sonolencia, descricao
+          FROM silver.incidentes
+         WHERE motorista_id = ${id} AND empresa_id = ${u.empresaId} AND origem = 'interno'
+         ORDER BY ocorrido_em DESC LIMIT 10`,
   ]);
   if (!r) throw naoEncontrado("Motorista");
 
@@ -108,6 +114,16 @@ export async function detalhe(u: Usuario, id: string) {
       inclinacaoCabecaMedia: r.inclinacao_cabeca_media,
       mediaDaFrota: frota?.media ?? null,
     },
+    ocorrencias: ocorrencias.map((o) => ({
+      id: o.id as string,
+      ocorridoEm: o.ocorrido_em as string,
+      gravidade: o.gravidade as string | null,
+      causa: o.causa as string | null,
+      tipo: o.tipo_acidente as string | null,
+      local: [o.municipio, o.uf].filter(Boolean).join(" - ") || null,
+      relacionadoSonolencia: o.relacionado_sonolencia as boolean,
+      descricao: o.descricao as string | null,
+    })),
   };
 }
 
@@ -200,6 +216,13 @@ export function regrasMotorista(d: Awaited<ReturnType<typeof detalhe>>): Insight
   if (ult.alertasGraves >= 5) {
     lista.push({ nivel: "high", icone: "alerta", titulo: "Alertas graves recorrentes",
       descricao: `${ult.alertasGraves} alertas de gravidade alta ou crítica nos últimos 30 dias. Avalie escala e treinamento.`, origem: "regra" });
+  }
+  const DIA_MS = 86_400_000;
+  const sono90d = d.ocorrencias.filter((o) => o.relacionadoSonolencia && Date.now() - new Date(o.ocorridoEm).getTime() <= 90 * DIA_MS);
+  if (sono90d.length > 0) {
+    const ultima = sono90d[0];
+    lista.push({ nivel: "critical", icone: "alerta", titulo: "Acidente por sono nos últimos 90 dias",
+      descricao: `${sono90d.length} ocorrência(s) ligada(s) à sonolência; a última em ${new Date(ultima.ocorridoEm).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}${ultima.local ? ` (${ultima.local})` : ""}. Priorize pausas e revise a escala.`, origem: "regra" });
   }
   if (lista.length === 0) {
     lista.push({ nivel: "low", icone: "ok", titulo: "Operação dentro do esperado",

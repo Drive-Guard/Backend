@@ -93,7 +93,21 @@ export function gerarPorRegras(c: ContextoInsights): ConteudoInsights {
     });
   }
 
-  // 7. Impacto estimado.
+  // 7. Acidentes por sono da própria frota.
+  const af = c.acidentesFrota;
+  if (af && af.porSono12m > 0 && af.ultimoPorSono) {
+    rec.push({
+      titulo: `${af.porSono12m} acidente${af.porSono12m > 1 ? "s" : ""} por sono na frota em 12 meses`,
+      descricao:
+        `O último foi às ${af.ultimoPorSono.horaLocal}${af.ultimoPorSono.codigo ? ` com ${af.ultimoPorSono.codigo}` : ""}` +
+        ` (${af.total12m} acidente${af.total12m > 1 ? "s" : ""} no total). ${af.ultimoPorSono.descricao ?? ""}`.trim(),
+      severidade: "alta",
+      acao_sugerida: "Manter pausa obrigatória nos alertas graves",
+      metrica: `acidentes_sono_12m=${af.porSono12m}`,
+    });
+  }
+
+  // 8. Impacto estimado.
   if (c.roi?.disponivel && c.roi.custoEvitadoAno) {
     rec.push({
       titulo: `Redução potencial de ${c.roi.reducaoPercentual}% nos acidentes por sono`,
