@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.cache/
+.pgdata/
+.arquivos/
+.serverless/
+.tsc/
+*.log
+exemplo*.pdf
+exemplo*.xlsx
+exemplo*.csv
+.env
+.env.*
