@@ -124,7 +124,8 @@ const config: AWS = {
       events: [{ schedule: "rate(1 hour)" }],
     }),
     insightsIa: worker("insightsIa", "Gera os insights com IA (Gemini) ou regras", {
-      timeout: 60,
+      // Até dois modelos com 45 s cada (ver IA_MODELO em servicos/insights/ia.ts).
+      timeout: 120,
       environment: { IA_API_KEY: ssm("ia_api_key"), IA_MODELO: ssm("ia_modelo") },
       events: [aoCriarArquivo("insights/contextos/")],
     }),

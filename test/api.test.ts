@@ -99,7 +99,10 @@ describe("motoristas e alertas", () => {
   it("lista ao vivo, detalhe, curva e insights", async () => {
     const lista = corpoJson(await motoristas(evento("GET /motoristas/ao-vivo")));
     expect(lista).toHaveLength(16);
-    const ativo = lista.find((m: { ativo: boolean }) => m.ativo);
+    // A escala do seed é a real: às vezes um turno acabou de fechar e ainda
+    // conta como ativo (leitura recente). Pega um com turno em andamento.
+    const ativo = lista.find((m: { ativo: boolean; turnoStatus: string }) => m.ativo && m.turnoStatus === "em_andamento");
+    expect(ativo).toBeTruthy();
     const detalhe = corpoJson(await motoristas(evento("GET /motoristas/{id}", { params: { id: ativo.motoristaId } })));
     expect(detalhe.codigo).toMatch(/^DRV-/);
     expect(detalhe.ultimos30d.turnos).toBeGreaterThan(0);

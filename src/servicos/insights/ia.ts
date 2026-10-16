@@ -12,7 +12,7 @@
 import { gerarPorRegras } from "./regras";
 import { schemaResposta, type ConteudoInsights, type ContextoInsights, type RespostaInsights } from "./tipos";
 
-export const VERSAO_PROMPT = "v2-2026-10";
+export const VERSAO_PROMPT = "v3-2026-10";
 
 const INSTRUCOES = `Você é analista de segurança de uma transportadora brasileira que usa câmeras
 embarcadas para detectar sonolência dos motoristas. Recebe um JSON com métricas da frota no período
@@ -29,7 +29,8 @@ Responda em português do Brasil, só com o JSON pedido:
 - "motoristas": até 5 insights individuais para os motoristas de maior risco, identificados SÓ pelo
   código (ex.: DRV-1003).
 
-Regras: use apenas números presentes no contexto, nunca invente dados; não cite nomes de pessoas;
+Regras: use apenas números presentes no contexto, nunca invente dados; copie horários, faixas e
+valores exatamente como estão no contexto (sem arredondar nem deslocar faixas); não cite nomes de pessoas;
 não prometa resultado; trate a PRF como referência nacional, não como dado da frota.`;
 
 const SCHEMA = {
@@ -80,7 +81,7 @@ export async function chamarGemini(
   buscar: typeof fetch = fetch,
 ): Promise<{ conteudo: ConteudoInsights; tokensEntrada: number | null; tokensSaida: number | null }> {
   const controle = new AbortController();
-  const tempo = setTimeout(() => controle.abort(), 25_000);
+  const tempo = setTimeout(() => controle.abort(), 45_000);
   try {
     const resp = await buscar(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
       method: "POST",
@@ -125,17 +126,28 @@ export async function gerarInsights(
   opcoes: { chave?: string; modelo?: string; buscar?: typeof fetch } = {},
 ): Promise<RespostaInsights> {
   const chave = opcoes.chave ?? process.env.IA_API_KEY ?? "";
-  const modelo = opcoes.modelo ?? process.env.IA_MODELO ?? "gemini-2.5-flash";
+  // Um ou mais modelos separados por vírgula: se o primeiro estiver com alta
+  // demanda (503), sem cota (429), fora do ar ou retirado (404), tenta o próximo.
+  const modelos = (opcoes.modelo ?? process.env.IA_MODELO ?? "gemini-3.6-flash,gemini-3.5-flash")
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
   const base = { execucaoId: contexto.execucaoId, empresaId: contexto.empresaId, versaoPrompt: VERSAO_PROMPT };
 
   if (chave && chave !== "nao-configurado") {
-    try {
-      const r = await chamarGemini(contexto, chave, modelo, opcoes.buscar);
-      return { ...base, ...r.conteudo, provedor: "google-gemini", modelo, tokensEntrada: r.tokensEntrada, tokensSaida: r.tokensSaida, status: "ok", erro: null };
-    } catch (e) {
-      console.warn("IA indisponível, usando regras:", (e as Error).message);
-      return { ...base, ...gerarPorRegras(contexto), provedor: "regras", modelo: null, tokensEntrada: null, tokensSaida: null, status: "fallback_regras", erro: (e as Error).message.slice(0, 500) };
+    const erros: string[] = [];
+    for (const modelo of modelos) {
+      try {
+        const r = await chamarGemini(contexto, chave, modelo, opcoes.buscar);
+        return { ...base, ...r.conteudo, provedor: "google-gemini", modelo, tokensEntrada: r.tokensEntrada, tokensSaida: r.tokensSaida, status: "ok", erro: null };
+      } catch (e) {
+        const msg = (e as Error).message;
+        erros.push(`${modelo}: ${msg}`);
+        console.warn(`IA indisponível em ${modelo}:`, msg);
+        if (!/Gemini (404|429|500|502|503|504)|abort/i.test(msg)) break; // erro do pedido: outro modelo não resolve
+      }
     }
+    return { ...base, ...gerarPorRegras(contexto), provedor: "regras", modelo: null, tokensEntrada: null, tokensSaida: null, status: "fallback_regras", erro: erros.join(" | ").slice(0, 500) };
   }
   return { ...base, ...gerarPorRegras(contexto), provedor: "regras", modelo: null, tokensEntrada: null, tokensSaida: null, status: "fallback_regras", erro: "IA não configurada" };
 }
