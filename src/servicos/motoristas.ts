@@ -54,7 +54,9 @@ export async function aoVivo(u: Usuario, f: Filtros) {
     turnoStatus: m.turno_status,
     score: m.score_atual,
     risco: m.risco,
+    // Tendência: última leitura contra a média das 5 anteriores (±1 ponto).
     tendencia: m.tendencia,
+    scoreAnterior: m.score_medio_anterior as number | null,
     blinkRate: m.blink_rate,
     fechamentoOlhosMs: m.duracao_olhos_fechados_ms,
     inclinacaoCabeca: m.head_pitch !== null ? Math.abs(m.head_pitch as number) : null,
