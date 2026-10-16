@@ -70,6 +70,17 @@ describe("insights", () => {
     expect(r.motoristas.map((m) => m.codigo)).toEqual([codigo]);
   });
 
+  it("insights seguem o período do filtro da dashboard", async () => {
+    const ctx7 = await montarContexto(EMPRESA_DEMO, undefined, { periodo: "7d" });
+    const ctx90 = await montarContexto(EMPRESA_DEMO, undefined, { periodo: "90d" });
+    expect(ctx7.periodo).toMatchObject({ dias: 7, rotulo: "nos últimos 7 dias" });
+    expect(ctx90.periodo.dias).toBe(90);
+    expect(ctx90.frota.turnosPeriodo).toBeGreaterThan(ctx7.frota.turnosPeriodo);
+    expect(ctx90.acidentesFrota.total).toBeGreaterThanOrEqual(ctx7.acidentesFrota.total);
+    const custom = await montarContexto(EMPRESA_DEMO, undefined, { de: "2026-01-01", ate: "2026-01-31" });
+    expect(custom.periodo).toMatchObject({ dias: 31, rotulo: "de 01/01/2026 a 31/01/2026" });
+  });
+
   it("IA indisponível cai nas regras", async () => {
     const ctx = await montarContexto(EMPRESA_DEMO);
     const r = await gerarInsights(ctx, { chave: "chave-teste", buscar: (async () => new Response('{"error":{"message":"quota"}}', { status: 429 })) as never });
@@ -96,6 +107,11 @@ describe("insights", () => {
 
     const [e] = await db()`SELECT status, concluido_em IS NOT NULL AS concluida FROM silver.insights_execucoes WHERE id = ${execucaoId}`;
     expect(e).toEqual({ status: "fallback_regras", concluida: true });
+
+    // A rodada é do período padrão (30 dias): outro período não a reaproveita.
+    const outro = await insights.ultimos(EMPRESA_DEMO, { periodo: "90d" });
+    expect(outro.execucaoId).toBeNull();
+    expect(outro.periodo.dias).toBe(90);
     expect((await dashboard(evento("POST /dashboard/insights/gerar", { papel: "operador" }))).statusCode).toBe(403);
   });
 });

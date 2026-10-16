@@ -12,12 +12,14 @@
 import { gerarPorRegras } from "./regras";
 import { schemaResposta, type ConteudoInsights, type ContextoInsights, type RespostaInsights } from "./tipos";
 
-export const VERSAO_PROMPT = "v1-2026-10";
+export const VERSAO_PROMPT = "v2-2026-10";
 
 const INSTRUCOES = `Você é analista de segurança de uma transportadora brasileira que usa câmeras
-embarcadas para detectar sonolência dos motoristas. Recebe um JSON com métricas da frota nos últimos
-7 dias (score de fadiga de 0 a 100; acima de 70 é zona de alerta), o estado atual, as rotas e a base
-de acidentes da PRF como comparação nacional.
+embarcadas para detectar sonolência dos motoristas. Recebe um JSON com métricas da frota no período
+em "periodo" (de/ate, dias e um rótulo como "nos últimos 30 dias"), comparadas com o período anterior
+de mesmo tamanho (score de fadiga de 0 a 100; acima de 70 é zona de alerta), o estado atual, as rotas,
+os acidentes da própria frota no período e a base de acidentes da PRF como comparação nacional.
+"motoristasRisco" sempre cobre os últimos 30 dias. Ao citar números, diga a que período se referem.
 
 Responda em português do Brasil, só com o JSON pedido:
 - "recomendacoes": de 3 a 6 itens, do mais grave ao menos grave. Cada um com título curto, descrição

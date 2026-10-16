@@ -33,7 +33,7 @@ export function gerarPorRegras(c: ContextoInsights): ConteudoInsights {
     rec.push({
       titulo: madrugada ? "Padrão crítico na madrugada" : `Pico de alertas entre ${c.horarioCritico.inicio} e ${c.horarioCritico.fim}`,
       descricao:
-        `${c.horarioCritico.percentual}% dos alertas dos últimos 7 dias ocorreram entre ${c.horarioCritico.inicio} e ${c.horarioCritico.fim}` +
+        `${c.horarioCritico.percentual}% dos alertas ${c.periodo.rotulo} ocorreram entre ${c.horarioCritico.inicio} e ${c.horarioCritico.fim}` +
         (madrugada ? ` e ${c.horarioCritico.madrugadaPercentual}% entre 0h e 6h.` : ".") +
         (c.prf?.madrugadaPercentual ? ` Na base da PRF, ${c.prf.madrugadaPercentual}% dos acidentes por sono de veículos pesados são de madrugada.` : ""),
       severidade: madrugada ? "critica" : "alta",
@@ -60,7 +60,7 @@ export function gerarPorRegras(c: ContextoInsights): ConteudoInsights {
     rec.push({
       titulo: `Rota ${rota.rota} com a maior fadiga`,
       descricao:
-        `Fadiga média de ${rota.fadiga} e ${rota.alertas} alertas na semana` +
+        `Fadiga média de ${rota.fadiga} e ${rota.alertas} alertas ${c.periodo.rotulo}` +
         (rota.prfAcidentesSono ? `; as BRs da rota tiveram ${rota.prfAcidentesSono} acidentes por sono nos últimos 12 meses (PRF).` : "."),
       severidade: rota.fadiga >= 70 ? "alta" : "media",
       acao_sugerida: "Planejar paradas e revezamento nessa rota",
@@ -68,14 +68,14 @@ export function gerarPorRegras(c: ContextoInsights): ConteudoInsights {
     });
   }
 
-  // 5. Tendência da semana.
+  // 5. Tendência contra o período anterior.
   if (fr.variacaoFadigaPercentual !== null && Math.abs(fr.variacaoFadigaPercentual) >= 5) {
     const subiu = fr.variacaoFadigaPercentual > 0;
     rec.push({
-      titulo: subiu ? `Fadiga da frota subiu ${fr.variacaoFadigaPercentual}% na semana` : `Fadiga da frota caiu ${-fr.variacaoFadigaPercentual}% na semana`,
-      descricao: `Média de ${fr.fadigaMedia7d} nos últimos 7 dias, contra ${fr.fadigaMedia7dAnterior} na semana anterior.`,
+      titulo: subiu ? `Fadiga da frota subiu ${fr.variacaoFadigaPercentual}%` : `Fadiga da frota caiu ${-fr.variacaoFadigaPercentual}%`,
+      descricao: `Média de ${fr.fadigaMediaPeriodo} ${c.periodo.rotulo}, contra ${fr.fadigaMediaPeriodoAnterior} no período anterior de mesmo tamanho.`,
       severidade: subiu ? (fr.variacaoFadigaPercentual >= 15 ? "alta" : "media") : "baixa",
-      acao_sugerida: subiu ? "Investigar jornadas e horários da semana" : "Manter as medidas adotadas",
+      acao_sugerida: subiu ? "Investigar jornadas e horários do período" : "Manter as medidas adotadas",
       metrica: `variacao_fadiga=${fr.variacaoFadigaPercentual}%`,
     });
   }
@@ -85,7 +85,7 @@ export function gerarPorRegras(c: ContextoInsights): ConteudoInsights {
     rec.push({
       titulo: `${fr.alertasAbertosGraves} alertas graves sem atendimento`,
       descricao:
-        `Alertas de gravidade alta ou crítica da semana ainda abertos.` +
+        `Alertas de gravidade alta ou crítica ${c.periodo.rotulo} ainda abertos.` +
         (c.atendimento.percentual !== null ? ` Nos últimos 30 dias, ${c.atendimento.percentual}% dos alertas graves tiveram pausa ou troca registrada.` : ""),
       severidade: "alta",
       acao_sugerida: "Tratar os alertas abertos na aba Monitoramento",
@@ -93,17 +93,17 @@ export function gerarPorRegras(c: ContextoInsights): ConteudoInsights {
     });
   }
 
-  // 7. Acidentes por sono da própria frota.
+  // 7. Acidentes por sono da própria frota no período.
   const af = c.acidentesFrota;
-  if (af && af.porSono12m > 0 && af.ultimoPorSono) {
+  if (af && af.porSono > 0 && af.ultimoPorSono) {
     rec.push({
-      titulo: `${af.porSono12m} acidente${af.porSono12m > 1 ? "s" : ""} por sono na frota em 12 meses`,
+      titulo: `${af.porSono} acidente${af.porSono > 1 ? "s" : ""} por sono na frota ${c.periodo.rotulo}`,
       descricao:
         `O último foi às ${af.ultimoPorSono.horaLocal}${af.ultimoPorSono.codigo ? ` com ${af.ultimoPorSono.codigo}` : ""}` +
-        ` (${af.total12m} acidente${af.total12m > 1 ? "s" : ""} no total). ${af.ultimoPorSono.descricao ?? ""}`.trim(),
+        ` (${af.total} acidente${af.total > 1 ? "s" : ""} no total; ${af.totalAnterior} no período anterior). ${af.ultimoPorSono.descricao ?? ""}`.trim(),
       severidade: "alta",
       acao_sugerida: "Manter pausa obrigatória nos alertas graves",
-      metrica: `acidentes_sono_12m=${af.porSono12m}`,
+      metrica: `acidentes_sono=${af.porSono}`,
     });
   }
 
@@ -121,7 +121,7 @@ export function gerarPorRegras(c: ContextoInsights): ConteudoInsights {
   if (rec.length === 0) {
     rec.push({
       titulo: "Operação dentro do esperado",
-      descricao: "Nenhum padrão crítico identificado nos últimos 7 dias.",
+      descricao: `Nenhum padrão crítico identificado ${c.periodo.rotulo}.`,
       severidade: "baixa",
       acao_sugerida: "Manter o monitoramento",
       metrica: "",
@@ -147,12 +147,14 @@ export function resumoPorRegras(c: ContextoInsights): string[] {
   const fr = c.frota;
   if (fr.variacaoFadigaPercentual !== null) {
     frases.push(
-      fr.variacaoFadigaPercentual >= 0
-        ? `A fadiga média subiu ${fr.variacaoFadigaPercentual}% em relação à semana anterior (${fr.fadigaMedia7d} contra ${fr.fadigaMedia7dAnterior}).`
-        : `A fadiga média caiu ${-fr.variacaoFadigaPercentual}% em relação à semana anterior (${fr.fadigaMedia7d} contra ${fr.fadigaMedia7dAnterior}).`,
+      Math.abs(fr.variacaoFadigaPercentual) < 1
+        ? `A fadiga média ficou estável em relação ao período anterior (${fr.fadigaMediaPeriodo} contra ${fr.fadigaMediaPeriodoAnterior}).`
+        : fr.variacaoFadigaPercentual >= 0
+        ? `A fadiga média subiu ${fr.variacaoFadigaPercentual}% em relação ao período anterior (${fr.fadigaMediaPeriodo} contra ${fr.fadigaMediaPeriodoAnterior}).`
+        : `A fadiga média caiu ${-fr.variacaoFadigaPercentual}% em relação ao período anterior (${fr.fadigaMediaPeriodo} contra ${fr.fadigaMediaPeriodoAnterior}).`,
     );
-  } else if (fr.fadigaMedia7d !== null) {
-    frases.push(`A fadiga média da frota na semana foi de ${fr.fadigaMedia7d}.`);
+  } else if (fr.fadigaMediaPeriodo !== null) {
+    frases.push(`A fadiga média da frota ${c.periodo.rotulo} foi de ${fr.fadigaMediaPeriodo}.`);
   }
   if (c.horarioCritico) {
     frases.push(`A maior concentração de alertas ocorreu entre ${c.horarioCritico.inicio} e ${c.horarioCritico.fim} (${c.horarioCritico.percentual}% do total).`);

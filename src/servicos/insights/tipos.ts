@@ -13,21 +13,22 @@ export interface ContextoInsights {
   execucaoId: string;
   empresaId: string;
   geradoEm: string;
-  periodo: { de: string; ate: string; anteriorDe: string; anteriorAte: string };
+  /** Período analisado (o do filtro da dashboard) e o anterior de mesmo tamanho, para comparar. */
+  periodo: { de: string; ate: string; dias: number; rotulo: string; anteriorDe: string; anteriorAte: string };
   frota: {
     motoristasMonitorados: number;
     motoristasAtivosAgora: number;
     emRiscoAgora: number;
     fadigaMediaAgora: number | null;
-    fadigaMedia7d: number | null;
-    fadigaMedia7dAnterior: number | null;
+    fadigaMediaPeriodo: number | null;
+    fadigaMediaPeriodoAnterior: number | null;
     variacaoFadigaPercentual: number | null;
-    alertas7d: number;
-    alertas7dAnterior: number;
-    alertasGraves7d: number;
+    alertasPeriodo: number;
+    alertasPeriodoAnterior: number;
+    alertasGravesPeriodo: number;
     alertasAbertosGraves: number;
-    horasDirigidas7d: number;
-    turnos7d: number;
+    horasDirigidasPeriodo: number;
+    turnosPeriodo: number;
   };
   horarioCritico: { inicio: string; fim: string; percentual: number | null; madrugadaPercentual: number | null } | null;
   fadigaPorHoraDirecao: { hora: string; fadiga: number | null; alertas: number }[];
@@ -48,10 +49,12 @@ export interface ContextoInsights {
   prf: { janelaAte: string; acidentesSonoPesados: number; madrugadaPercentual: number | null } | null;
   roi: { disponivel: boolean; acidentesEvitadosAno: number | null; custoEvitadoAno: number | null; reducaoPercentual: number | null } | null;
   atendimento: { graves30d: number; atendidos30d: number; percentual: number | null };
-  /** Acidentes da própria frota (não os da PRF) nos últimos 12 meses. */
+  /** Acidentes da própria frota (não os da PRF) no período e no período anterior. */
   acidentesFrota: {
-    total12m: number;
-    porSono12m: number;
+    total: number;
+    porSono: number;
+    totalAnterior: number;
+    porSonoAnterior: number;
     ultimoPorSono: { codigo: string | null; quando: string; horaLocal: string; descricao: string | null } | null;
   };
 }

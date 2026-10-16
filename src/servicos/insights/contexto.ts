@@ -7,15 +7,45 @@ import { usuarioSistema } from "../../lib/auth";
 import { db } from "../../lib/db";
 import { lerFiltros } from "../../lib/filtros";
 import { arred, variacaoPercentual } from "../../lib/numeros";
+import { diaLocal } from "../../lib/tempo";
 import { ROTULO_TIPO_VEICULO } from "../../lib/filtros";
 import * as dashboard from "../dashboard";
 import * as roi from "../roi";
 import type { ContextoInsights } from "./tipos";
 
-export async function montarContexto(empresaId: string, execucaoId: string = randomUUID()): Promise<ContextoInsights> {
+/** Período dos insights: o mesmo filtro da dashboard (periodo ou de/ate). */
+export interface ConsultaPeriodo {
+  periodo?: string;
+  de?: string;
+  ate?: string;
+}
+
+/** Período padrão dos insights: o padrão da dashboard. */
+export const PERIODO_PADRAO = "30d";
+
+export function filtrosDoPeriodo(consulta: ConsultaPeriodo = {}) {
+  return lerFiltros({ periodo: consulta.periodo, de: consulta.de, ate: consulta.ate }, PERIODO_PADRAO);
+}
+
+/** Chave canônica do período (datas), a mesma para "30d" e para as datas equivalentes. */
+export function chavePeriodo(p: { de: string; ate: string }) {
+  return `${p.de}..${p.ate}`;
+}
+
+export function rotuloPeriodo(p: { de: string; ate: string; dias: number }) {
+  const br = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
+  if (p.ate === diaLocal()) return p.dias === 1 ? "hoje" : `nos últimos ${p.dias} dias`;
+  return p.de === p.ate ? `em ${br(p.de)}` : `de ${br(p.de)} a ${br(p.ate)}`;
+}
+
+export async function montarContexto(
+  empresaId: string,
+  execucaoId: string = randomUUID(),
+  consulta: ConsultaPeriodo = {},
+): Promise<ContextoInsights> {
   const sql = db();
   const u = usuarioSistema(empresaId);
-  const f = lerFiltros({ periodo: "7d" });
+  const f = filtrosDoPeriodo(consulta);
 
   const [kpis, tendencia, rotas, ranking, emRisco, porTipo, porRegiao, tipos, abertos, prf, calc, acidentes] = await Promise.all([
     dashboard.kpis(u, f),
@@ -58,19 +88,23 @@ export async function montarContexto(empresaId: string, execucaoId: string = ran
       SELECT COUNT(*)::int AS total
         FROM silver.alertas a JOIN silver.motoristas m ON m.id = a.motorista_id
        WHERE m.empresa_id = ${empresaId} AND a.status = 'aberto' AND a.gravidade IN ('alta', 'critica')
-         AND a.disparado_em >= now() - interval '7 days'
+         AND (a.disparado_em AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN ${f.periodo.de} AND ${f.periodo.ate}
     `,
     dashboard.prfFaixaHoraria(f, {}),
     roi.calcular(empresaId),
     sql`
       SELECT i.ocorrido_em, i.relacionado_sonolencia, i.descricao, m.codigo,
-             to_char(i.ocorrido_em AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') AS hora_local
+             to_char(i.ocorrido_em AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') AS hora_local,
+             (i.ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date >= ${f.periodo.de}::date AS no_periodo
         FROM silver.incidentes i LEFT JOIN silver.motoristas m ON m.id = i.motorista_id
-       WHERE i.empresa_id = ${empresaId} AND i.origem = 'interno' AND i.ocorrido_em >= now() - interval '12 months'
+       WHERE i.empresa_id = ${empresaId} AND i.origem = 'interno'
+         AND (i.ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN ${f.periodo.anteriorDe} AND ${f.periodo.ate}
        ORDER BY i.ocorrido_em DESC
     `,
   ]);
-  const sonoFrota = acidentes.filter((a) => a.relacionado_sonolencia);
+  const noPeriodo = acidentes.filter((a) => a.no_periodo);
+  const anteriores = acidentes.filter((a) => !a.no_periodo);
+  const sonoFrota = noPeriodo.filter((a) => a.relacionado_sonolencia);
 
   const sonoPesados = prf.carregada ? prf.faixas.reduce((a, x) => a + (x.acidentesSono as number), 0) : 0;
   const madrugadaPrf = prf.carregada ? prf.faixas.find((x) => x.faixa === "madrugada")?.percentualSono ?? null : null;
@@ -80,21 +114,28 @@ export async function montarContexto(empresaId: string, execucaoId: string = ran
     execucaoId,
     empresaId,
     geradoEm: new Date().toISOString(),
-    periodo: { de: f.periodo.de, ate: f.periodo.ate, anteriorDe: f.periodo.anteriorDe, anteriorAte: f.periodo.anteriorAte },
+    periodo: {
+      de: f.periodo.de,
+      ate: f.periodo.ate,
+      dias: f.periodo.dias,
+      rotulo: rotuloPeriodo(f.periodo),
+      anteriorDe: f.periodo.anteriorDe,
+      anteriorAte: f.periodo.anteriorAte,
+    },
     frota: {
       motoristasMonitorados: kpis.aoVivo.motoristasMonitorados,
       motoristasAtivosAgora: kpis.aoVivo.motoristasAtivos,
       emRiscoAgora: kpis.aoVivo.motoristasEmRisco,
       fadigaMediaAgora: kpis.aoVivo.fadigaMedia,
-      fadigaMedia7d: kpis.periodo.fadigaMedia,
-      fadigaMedia7dAnterior: kpis.periodo.fadigaMediaAnterior,
+      fadigaMediaPeriodo: kpis.periodo.fadigaMedia,
+      fadigaMediaPeriodoAnterior: kpis.periodo.fadigaMediaAnterior,
       variacaoFadigaPercentual: variacaoPercentual(kpis.periodo.fadigaMedia, kpis.periodo.fadigaMediaAnterior),
-      alertas7d: kpis.periodo.alertas,
-      alertas7dAnterior: kpis.periodo.alertasAnterior,
-      alertasGraves7d: kpis.periodo.alertasGraves,
+      alertasPeriodo: kpis.periodo.alertas,
+      alertasPeriodoAnterior: kpis.periodo.alertasAnterior,
+      alertasGravesPeriodo: kpis.periodo.alertasGraves,
       alertasAbertosGraves: (abertos[0]?.total as number) ?? 0,
-      horasDirigidas7d: kpis.periodo.horasDirigidas,
-      turnos7d: kpis.periodo.turnos,
+      horasDirigidasPeriodo: kpis.periodo.horasDirigidas,
+      turnosPeriodo: kpis.periodo.turnos,
     },
     horarioCritico: kpis.horarioCritico
       ? {
@@ -146,8 +187,10 @@ export async function montarContexto(empresaId: string, execucaoId: string = ran
       percentual: arred(calc.alertasAtendidos30d.percentual, 0),
     },
     acidentesFrota: {
-      total12m: acidentes.length,
-      porSono12m: sonoFrota.length,
+      total: noPeriodo.length,
+      porSono: sonoFrota.length,
+      totalAnterior: anteriores.length,
+      porSonoAnterior: anteriores.filter((a) => a.relacionado_sonolencia).length,
       ultimoPorSono: sonoFrota[0]
         ? {
             codigo: sonoFrota[0].codigo as string | null,

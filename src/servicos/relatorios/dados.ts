@@ -176,11 +176,11 @@ export async function resumo(c: Contexto) {
   };
 }
 
-/** Resumo em frases. Período padrão de 7 dias sem outros filtros: o da IA, se recente. */
+/** Resumo em frases. Sem outros filtros, usa o da IA para o mesmo período, se houver rodada recente. */
 async function resumoInteligente(c: Contexto, kpis: Awaited<ReturnType<typeof dashboard.kpis>>, distribuicao: { tipo: string; eventos: number }[]) {
   const semRefino = !c.r.risco && !c.r.veiculo_id && !c.r.faixa_horaria && !c.f.regiao && !c.f.tipoVeiculo;
-  if (semRefino && c.f.periodo.dias === 7) {
-    const ultimos = await insights.ultimos(c.u.empresaId);
+  if (semRefino) {
+    const ultimos = await insights.ultimos(c.u.empresaId, { de: c.f.periodo.de, ate: c.f.periodo.ate });
     if (ultimos.origem === "ia" && ultimos.resumo.length) {
       return { frases: ultimos.resumo, origem: "ia", geradoEm: ultimos.geradoEm };
     }
@@ -188,7 +188,9 @@ async function resumoInteligente(c: Contexto, kpis: Awaited<ReturnType<typeof da
 
   const frases: string[] = [];
   const p = kpis.periodo;
-  if (p.variacaoFadiga !== null) {
+  if (p.variacaoFadiga !== null && Math.abs(p.variacaoFadiga) < 1) {
+    frases.push(`A fadiga média ficou estável em relação ao período anterior (${formatarNumero(p.fadigaMedia, 1)} contra ${formatarNumero(p.fadigaMediaAnterior, 1)}).`);
+  } else if (p.variacaoFadiga !== null) {
     frases.push(`A fadiga média ${p.variacaoFadiga <= 0 ? "reduziu" : "aumentou"} ${Math.abs(p.variacaoFadiga)}% em relação ao período anterior (${formatarNumero(p.fadigaMedia, 1)} contra ${formatarNumero(p.fadigaMediaAnterior, 1)}).`);
   } else if (p.fadigaMedia !== null) {
     frases.push(`A fadiga média da frota no período foi de ${formatarNumero(p.fadigaMedia, 1)}.`);

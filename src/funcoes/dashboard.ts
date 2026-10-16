@@ -34,8 +34,9 @@ export const handler = criarRoteador("dashboard", {
   prfFaixaHoraria: async ({ query }) => ok(await servico.prfFaixaHoraria(lerFiltros(query), query)),
   prfCausas: async ({ query }) => ok(await servico.prfCausas(lerFiltros(query), query)),
   prfMapa: async ({ query }) => ok(await servico.prfMapa(lerFiltros(query), query)),
-  insights: async ({ usuario }) => ok(await insights.ultimos(usuario.empresaId)),
-  gerarInsights: async ({ usuario }) => json(202, await insights.pedir(usuario.empresaId)),
+  // Os insights seguem o filtro de período da dashboard (periodo ou de/ate).
+  insights: async ({ usuario, query }) => ok(await insights.ultimos(usuario.empresaId, query)),
+  gerarInsights: async ({ usuario, query }) => json(202, await insights.pedir(usuario.empresaId, query)),
   roi: async ({ usuario }) => ok(await roi.calcular(usuario.empresaId)),
   exportar: async ({ usuario, query }) =>
     csv(`driveguard-motoristas-${diaLocal()}.csv`, await servico.exportarCsv(usuario, lerFiltros(query))),

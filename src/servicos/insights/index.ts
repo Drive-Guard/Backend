@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto";
 import { gravarJson } from "../../lib/arquivos";
 import { db } from "../../lib/db";
-import { montarContexto } from "./contexto";
+import { chavePeriodo, filtrosDoPeriodo, montarContexto, rotuloPeriodo, type ConsultaPeriodo } from "./contexto";
 import { gerarPorRegras } from "./regras";
 import type { RespostaInsights } from "./tipos";
 
@@ -20,17 +20,19 @@ export const chaveResposta = (empresaId: string, execucaoId: string) => `insight
 /** Validade de uma rodada: depois disso a dashboard mostra que está desatualizada. */
 const VALIDADE_HORAS = 24;
 
-export async function pedir(empresaId: string) {
+/** Pede uma rodada de insights para o período (o filtro da dashboard; padrão 30 dias). */
+export async function pedir(empresaId: string, consulta: ConsultaPeriodo = {}) {
   const sql = db();
   const execucaoId = randomUUID();
-  const contexto = await montarContexto(empresaId, execucaoId);
+  const contexto = await montarContexto(empresaId, execucaoId, consulta);
   const chave = chaveContexto(empresaId, execucaoId);
+  const periodo = chavePeriodo(contexto.periodo);
   await sql`
-    INSERT INTO silver.insights_execucoes (id, empresa_id, versao_prompt, status, contexto_s3_key)
-    VALUES (${execucaoId}, ${empresaId}, 'contexto-v1', 'pendente', ${chave})
+    INSERT INTO silver.insights_execucoes (id, empresa_id, versao_prompt, status, contexto_s3_key, periodo)
+    VALUES (${execucaoId}, ${empresaId}, 'contexto-v2', 'pendente', ${chave}, ${periodo})
   `;
   await gravarJson(chave, contexto);
-  return { execucaoId, status: "pendente" as const };
+  return { execucaoId, status: "pendente" as const, periodo: contexto.periodo };
 }
 
 /** Empresas com leitura nos últimos 7 dias: as que recebem a rodada horária. */
@@ -91,21 +93,27 @@ export async function gravar(r: RespostaInsights) {
 const DE_GRAVIDADE: Record<string, string> = { baixa: "low", media: "medium", alta: "high", critica: "critical" };
 
 /**
- * Insights mais recentes da empresa. Sem nenhuma rodada válida (banco recém
- * criado), calcula pelas regras na hora, sem gravar.
+ * Insights mais recentes da empresa para o período (o filtro da dashboard).
+ * Usa a última rodada válida daquele período (dentro da validade); sem
+ * nenhuma, calcula pelas regras na hora, sem gravar.
  */
-export async function ultimos(empresaId: string) {
+export async function ultimos(empresaId: string, consulta: ConsultaPeriodo = {}) {
   const sql = db();
+  const f = filtrosDoPeriodo(consulta);
+  const periodo = chavePeriodo(f.periodo);
+  const infoPeriodo = { de: f.periodo.de, ate: f.periodo.ate, dias: f.periodo.dias, rotulo: rotuloPeriodo(f.periodo) };
   const [exec] = await sql`
     SELECT e.id, e.concluido_em, e.status, e.provedor, e.modelo
       FROM silver.insights_execucoes e
-     WHERE e.empresa_id = ${empresaId} AND e.status IN ('ok', 'fallback_regras')
+     WHERE e.empresa_id = ${empresaId} AND e.periodo = ${periodo} AND e.status IN ('ok', 'fallback_regras')
+       AND e.concluido_em >= now() - make_interval(hours => ${VALIDADE_HORAS})
        AND EXISTS (SELECT 1 FROM silver.insights_frota f WHERE f.execucao_id = e.id)
      ORDER BY e.concluido_em DESC NULLS LAST LIMIT 1
   `;
   const [pendente] = await sql`
     SELECT id, iniciado_em FROM silver.insights_execucoes
-     WHERE empresa_id = ${empresaId} AND status = 'pendente' AND iniciado_em >= now() - interval '10 minutes'
+     WHERE empresa_id = ${empresaId} AND periodo = ${periodo} AND status = 'pendente'
+       AND iniciado_em >= now() - interval '10 minutes'
      ORDER BY iniciado_em DESC LIMIT 1
   `;
 
@@ -118,6 +126,7 @@ export async function ultimos(empresaId: string) {
     `;
     return {
       execucaoId: exec.id,
+      periodo: infoPeriodo,
       geradoEm: exec.concluido_em,
       provedor: exec.provedor,
       modelo: exec.modelo,
@@ -130,9 +139,10 @@ export async function ultimos(empresaId: string) {
     };
   }
 
-  const regras = gerarPorRegras(await montarContexto(empresaId));
+  const regras = gerarPorRegras(await montarContexto(empresaId, undefined, consulta));
   return {
     execucaoId: null,
+    periodo: infoPeriodo,
     geradoEm: new Date().toISOString(),
     provedor: "regras",
     modelo: null,

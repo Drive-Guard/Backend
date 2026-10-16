@@ -203,10 +203,11 @@ async function principal() {
     const r = await g("/dashboard/exportar");
     if (r.status !== 200 || !String(r.corpo).includes("Código;Motorista")) throw new Error("CSV inválido");
   });
-  await passo("Insights: pedir nova análise e ver o resultado", async () => {
-    const pedido = esperar(await chamar("gestor", "POST", "/dashboard/insights/gerar", undefined, {}), 202);
+  await passo("Insights: pedir nova análise do período (7 dias) e ver o resultado", async () => {
+    const pedido = esperar(await chamar("gestor", "POST", "/dashboard/insights/gerar", { periodo: "7d" }, {}), 202);
     for (let i = 0; i < 30; i++) {
-      const ins = esperar(await g("/dashboard/insights"), 200);
+      const ins = esperar(await g("/dashboard/insights", { periodo: "7d" }), 200);
+      if (ins.periodo?.dias !== 7) throw new Error(`período errado: ${JSON.stringify(ins.periodo)}`);
       if (ins.execucaoId === pedido.execucaoId) return `${ins.recomendacoes.length} recomendações por ${ins.origem}`;
       await new Promise((ok) => setTimeout(ok, 3000));
     }
