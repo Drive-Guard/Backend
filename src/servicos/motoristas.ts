@@ -235,7 +235,13 @@ export function regrasMotorista(d: Awaited<ReturnType<typeof detalhe>>): Insight
       descricao: `${ult.alertasGraves} alertas de gravidade alta ou crítica nos últimos 30 dias. Avalie escala e treinamento.`, origem: "regra" });
   }
   const DIA_MS = 86_400_000;
-  const sono90d = d.ocorrencias.filter((o) => o.relacionadoSonolencia && Date.now() - new Date(o.ocorridoEm).getTime() <= 90 * DIA_MS);
+  // Acidente tem gravidade; sem gravidade é quase-acidente (ocorrência sem acidente).
+  const sono90d = d.ocorrencias.filter((o) => o.gravidade && o.relacionadoSonolencia && Date.now() - new Date(o.ocorridoEm).getTime() <= 90 * DIA_MS);
+  const quase30d = d.ocorrencias.filter((o) => !o.gravidade && o.relacionadoSonolencia && Date.now() - new Date(o.ocorridoEm).getTime() <= 30 * DIA_MS);
+  if (quase30d.length > 0 && sono90d.length === 0) {
+    lista.push({ nivel: "high", icone: "alerta", titulo: "Quase acidente por sono nos últimos 30 dias",
+      descricao: `${quase30d.length} ocorrência(s) sem acidente ligada(s) à sonolência (${quase30d[0].tipo?.replace("Quase acidente: ", "") ?? "quase acidente"}). Sinal de alerta para escala e pausas.`, origem: "regra" });
+  }
   if (sono90d.length > 0) {
     const ultima = sono90d[0];
     lista.push({ nivel: "critical", icone: "alerta", titulo: "Acidente por sono nos últimos 90 dias",

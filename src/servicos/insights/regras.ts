@@ -107,6 +107,17 @@ export function gerarPorRegras(c: ContextoInsights): ConteudoInsights {
     });
   }
 
+  // 7b. Quase-acidentes por sono: sinal precoce, antes do acidente.
+  if (af && af.quaseAcidentes > 0) {
+    rec.push({
+      titulo: `${af.quaseAcidentes} quase-acidente${af.quaseAcidentes > 1 ? "s" : ""} por sono ${c.periodo.rotulo}`,
+      descricao: `Ocorrências sem acidente (saída de faixa, quase colisão) com o motorista sonolento. Cada uma é um acidente que quase aconteceu.`,
+      severidade: "media",
+      acao_sugerida: "Revisar escala e pausas dos motoristas envolvidos",
+      metrica: `quase_acidentes=${af.quaseAcidentes}`,
+    });
+  }
+
   // 8. Impacto estimado.
   if (c.roi?.disponivel && c.roi.custoEvitadoAno) {
     rec.push({

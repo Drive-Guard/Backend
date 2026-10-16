@@ -93,7 +93,7 @@ export async function montarContexto(
     dashboard.prfFaixaHoraria(f, {}),
     roi.calcular(empresaId),
     sql`
-      SELECT i.ocorrido_em, i.relacionado_sonolencia, i.descricao, m.codigo,
+      SELECT i.ocorrido_em, i.relacionado_sonolencia, i.descricao, m.codigo, i.gravidade IS NOT NULL AS acidente,
              to_char(i.ocorrido_em AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') AS hora_local,
              (i.ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date >= ${f.periodo.de}::date AS no_periodo
         FROM silver.incidentes i LEFT JOIN silver.motoristas m ON m.id = i.motorista_id
@@ -102,8 +102,10 @@ export async function montarContexto(
        ORDER BY i.ocorrido_em DESC
     `,
   ]);
-  const noPeriodo = acidentes.filter((a) => a.no_periodo);
-  const anteriores = acidentes.filter((a) => !a.no_periodo);
+  // Acidente = tem gravidade; sem gravidade é quase-acidente (ocorrência sem acidente).
+  const quaseNoPeriodo = acidentes.filter((a) => a.no_periodo && !a.acidente);
+  const noPeriodo = acidentes.filter((a) => a.no_periodo && a.acidente);
+  const anteriores = acidentes.filter((a) => !a.no_periodo && a.acidente);
   const sonoFrota = noPeriodo.filter((a) => a.relacionado_sonolencia);
 
   const sonoPesados = prf.carregada ? prf.faixas.reduce((a, x) => a + (x.acidentesSono as number), 0) : 0;
@@ -191,6 +193,7 @@ export async function montarContexto(
       porSono: sonoFrota.length,
       totalAnterior: anteriores.length,
       porSonoAnterior: anteriores.filter((a) => a.relacionado_sonolencia).length,
+      quaseAcidentes: quaseNoPeriodo.length,
       ultimoPorSono: sonoFrota[0]
         ? {
             codigo: sonoFrota[0].codigo as string | null,

@@ -100,11 +100,15 @@ export async function kpis(u: Usuario, f: Filtros) {
     agregadoPeriodo(sql, u, f, f.periodo.anteriorDe, f.periodo.anteriorAte),
     horarioCritico(sql, u, f),
     // Acidentes da própria frota (não os da PRF) no período e no anterior.
+    // Acidente = tem gravidade; sem gravidade é ocorrência sem acidente
+    // (quase-acidente: saída de faixa, quase colisão).
     sql`
-      SELECT COUNT(*) FILTER (WHERE d >= ${f.periodo.de}::date)::int                             AS total,
-             COUNT(*) FILTER (WHERE d >= ${f.periodo.de}::date AND relacionado_sonolencia)::int  AS sono,
-             COUNT(*) FILTER (WHERE d <  ${f.periodo.de}::date)::int                             AS anterior
-        FROM (SELECT (ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date AS d, relacionado_sonolencia
+      SELECT COUNT(*) FILTER (WHERE d >= ${f.periodo.de}::date AND acidente)::int                             AS total,
+             COUNT(*) FILTER (WHERE d >= ${f.periodo.de}::date AND acidente AND relacionado_sonolencia)::int  AS sono,
+             COUNT(*) FILTER (WHERE d <  ${f.periodo.de}::date AND acidente)::int                             AS anterior,
+             COUNT(*) FILTER (WHERE d >= ${f.periodo.de}::date AND NOT acidente)::int                         AS quase
+        FROM (SELECT (ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date AS d, relacionado_sonolencia,
+                     gravidade IS NOT NULL AS acidente
                 FROM silver.incidentes
                WHERE empresa_id = ${u.empresaId} AND origem = 'interno') i
        WHERE d BETWEEN ${f.periodo.anteriorDe} AND ${f.periodo.ate}
@@ -124,7 +128,7 @@ export async function kpis(u: Usuario, f: Filtros) {
       variacao: variacaoPercentual(alertas.ultimas_24h, alertas.anteriores_24h),
     },
     horarioCritico: critico,
-    acidentesFrota: { total: acidentes.total, porSono: acidentes.sono, anterior: acidentes.anterior },
+    acidentesFrota: { total: acidentes.total, porSono: acidentes.sono, anterior: acidentes.anterior, quaseAcidentes: acidentes.quase },
     periodo: {
       de: f.periodo.de,
       ate: f.periodo.ate,

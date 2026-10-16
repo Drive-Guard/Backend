@@ -21,8 +21,9 @@ const consultas: [string, string][] = [
            (SELECT count(*) FROM silver.acoes_motorista) acoes,
            (SELECT count(*) FROM silver.incidentes WHERE origem = 'interno') acidentes`],
   ["Leituras por fase", `
-    WITH f AS (SELECT min(iniciado_em) + (max(iniciado_em) - min(iniciado_em)) * 0.4 AS corte FROM silver.turnos)
-    SELECT CASE WHEN t.iniciado_em < f.corte THEN '1 piloto' ELSE '2 operação' END fase,
+    WITH f AS (SELECT min(iniciado_em) + (max(iniciado_em) - min(iniciado_em)) * 0.25 AS c1,
+                      min(iniciado_em) + (max(iniciado_em) - min(iniciado_em)) * 0.5 AS c2 FROM silver.turnos)
+    SELECT CASE WHEN t.iniciado_em < f.c1 THEN '1 piloto' WHEN t.iniciado_em < f.c2 THEN '2 central' ELSE '3 programa' END fase,
            count(DISTINCT t.id)::int turnos, round(avg(l.score_fadiga), 1)::float score_medio,
            round(100.0 * count(*) FILTER (WHERE l.estado = 'alerta') / count(*), 1)::float pct_alerta,
            round(100.0 * count(*) FILTER (WHERE l.estado = 'fadiga') / count(*), 1)::float pct_fadiga,
@@ -30,8 +31,9 @@ const consultas: [string, string][] = [
       FROM silver.turnos t CROSS JOIN f JOIN silver.leituras_fadiga l ON l.turno_id = t.id
      GROUP BY 1 ORDER BY 1`],
   ["Alertas por fase", `
-    WITH f AS (SELECT min(iniciado_em) + (max(iniciado_em) - min(iniciado_em)) * 0.4 AS corte FROM silver.turnos)
-    SELECT CASE WHEN a.disparado_em < f.corte THEN '1 piloto' ELSE '2 operação' END fase,
+    WITH f AS (SELECT min(iniciado_em) + (max(iniciado_em) - min(iniciado_em)) * 0.25 AS c1,
+                      min(iniciado_em) + (max(iniciado_em) - min(iniciado_em)) * 0.5 AS c2 FROM silver.turnos)
+    SELECT CASE WHEN a.disparado_em < f.c1 THEN '1 piloto' WHEN a.disparado_em < f.c2 THEN '2 central' ELSE '3 programa' END fase,
            count(*)::int alertas, round(count(*)::numeric / count(DISTINCT a.disparado_em::date), 1)::float por_dia,
            count(*) FILTER (WHERE gravidade = 'critica')::int criticos,
            count(*) FILTER (WHERE gravidade = 'alta')::int altos,
@@ -40,10 +42,21 @@ const consultas: [string, string][] = [
   ["Tipos de alerta", `SELECT tipo::text, count(*)::int FROM silver.alertas GROUP BY 1 ORDER BY 2 DESC`],
   ["Ações", `SELECT tipo::text, count(*)::int total, count(*) FILTER (WHERE eficaz)::int eficazes FROM silver.acoes_motorista GROUP BY 1`],
   ["Acidentes da frota", `
-    SELECT origem_id_externo id, to_char(ocorrido_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') quando, m.codigo,
-           relacionado_sonolencia sono, gravidade::text, municipio, uf, descricao
+    SELECT origem_id_externo id, to_char(ocorrido_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM/YY HH24:MI') quando, m.codigo,
+           relacionado_sonolencia sono, COALESCE(gravidade::text, 'quase') gravidade, left(descricao, 70) descricao
       FROM silver.incidentes i JOIN silver.motoristas m ON m.id = i.motorista_id
      WHERE origem = 'interno' ORDER BY ocorrido_em`],
+  ["Fadiga média por mês", `
+    SELECT to_char(registrado_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM') mes, round(avg(score_fadiga), 1)::float score,
+           round(100.0 * count(*) FILTER (WHERE estado = 'sonolento') / count(*), 1)::float pct_sonolento
+      FROM silver.leituras_fadiga GROUP BY 1 ORDER BY 1`],
+  ["Treinados: fadiga 30 dias antes x depois", `
+    SELECT m.codigo, to_char(a.realizado_em, 'DD/MM/YY') treino, a.eficaz,
+           (SELECT round(avg(score_fadiga), 1)::float FROM silver.leituras_fadiga l WHERE l.motorista_id = a.motorista_id
+             AND l.registrado_em BETWEEN a.realizado_em - interval '30 days' AND a.realizado_em) antes,
+           (SELECT round(avg(score_fadiga), 1)::float FROM silver.leituras_fadiga l WHERE l.motorista_id = a.motorista_id
+             AND l.registrado_em BETWEEN a.realizado_em + interval '45 days' AND a.realizado_em + interval '75 days') depois
+      FROM silver.acoes_motorista a JOIN silver.motoristas m ON m.id = a.motorista_id WHERE a.tipo = 'treinamento' ORDER BY 1`],
   ["Motoristas", `
     SELECT m.codigo, m.status::text, count(DISTINCT t.id)::int turnos, round(avg(l.score_fadiga), 1)::float score,
            max(l.score_fadiga)::float pico,

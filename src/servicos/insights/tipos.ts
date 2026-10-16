@@ -55,6 +55,8 @@ export interface ContextoInsights {
     porSono: number;
     totalAnterior: number;
     porSonoAnterior: number;
+    /** Ocorrências sem acidente (saída de faixa, quase colisão) no período. */
+    quaseAcidentes: number;
     ultimoPorSono: { codigo: string | null; quando: string; horaLocal: string; descricao: string | null } | null;
   };
 }
