@@ -10,7 +10,7 @@ import type { Usuario } from "../lib/auth";
 import { db, type Sql } from "../lib/db";
 import { condicoesDimensao, type Filtros, ROTULO_TIPO_VEICULO } from "../lib/filtros";
 import { invalido } from "../lib/http";
-import { nivelRisco, variacaoPercentual, arred } from "../lib/numeros";
+import { LIMITE_EM_RISCO, nivelRisco, variacaoPercentual, arred } from "../lib/numeros";
 import { diaLocal, diasEntre, listaDias, somarDias } from "../lib/tempo";
 
 /** Leitura mais antiga que isto não conta como "ao vivo". */
@@ -80,7 +80,7 @@ export async function kpis(u: Usuario, f: Filtros) {
   const sql = db();
   const dims = condicoesDimensao(sql, f);
 
-  const [[aoVivo], [alertas], [periodo], [anterior], critico] = await Promise.all([
+  const [[aoVivo], [alertas], [periodo], [anterior], critico, [acidentes]] = await Promise.all([
     sql`
       SELECT COUNT(*) FILTER (WHERE ultima_leitura_em >= now() - ${JANELA_AO_VIVO}::interval)::int AS ativos,
              COUNT(*) FILTER (WHERE ultima_leitura_em >= now() - ${JANELA_AO_VIVO}::interval
@@ -99,6 +99,16 @@ export async function kpis(u: Usuario, f: Filtros) {
     agregadoPeriodo(sql, u, f, f.periodo.de, f.periodo.ate),
     agregadoPeriodo(sql, u, f, f.periodo.anteriorDe, f.periodo.anteriorAte),
     horarioCritico(sql, u, f),
+    // Acidentes da própria frota (não os da PRF) no período e no anterior.
+    sql`
+      SELECT COUNT(*) FILTER (WHERE d >= ${f.periodo.de}::date)::int                             AS total,
+             COUNT(*) FILTER (WHERE d >= ${f.periodo.de}::date AND relacionado_sonolencia)::int  AS sono,
+             COUNT(*) FILTER (WHERE d <  ${f.periodo.de}::date)::int                             AS anterior
+        FROM (SELECT (ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date AS d, relacionado_sonolencia
+                FROM silver.incidentes
+               WHERE empresa_id = ${u.empresaId} AND origem = 'interno') i
+       WHERE d BETWEEN ${f.periodo.anteriorDe} AND ${f.periodo.ate}
+    `,
   ]);
 
   return {
@@ -114,6 +124,7 @@ export async function kpis(u: Usuario, f: Filtros) {
       variacao: variacaoPercentual(alertas.ultimas_24h, alertas.anteriores_24h),
     },
     horarioCritico: critico,
+    acidentesFrota: { total: acidentes.total, porSono: acidentes.sono, anterior: acidentes.anterior },
     periodo: {
       de: f.periodo.de,
       ate: f.periodo.ate,
@@ -150,9 +161,16 @@ export function agregadoPeriodo(sql: Sql, u: Usuario, f: Filtros, de: string, at
 // Tempo real
 // ---------------------------------------------------------------------------
 
-export async function alertasTempoReal(u: Usuario, f: Filtros) {
+/**
+ * Motoristas em risco agora e alertas recentes. A janela (horas) e o filtro
+ * de graves vêm dos atalhos de outras telas (ex.: "alertas nas últimas 24h").
+ */
+export async function alertasTempoReal(u: Usuario, f: Filtros, opcoes: { horas?: number; graves?: boolean } = {}) {
   const sql = db();
   const dims = condicoesDimensao(sql, f);
+  const horas = Math.min(720, Math.max(1, Math.round(opcoes.horas ?? 6)));
+  const graves = opcoes.graves ? sql`AND a.gravidade IN ('alta', 'critica')` : sql``;
+  const limite = horas > 6 ? 100 : 12;
   const [motoristas, eventos] = await Promise.all([
     sql`
       SELECT motorista_id, codigo, nome, score_atual, risco, tendencia, blink_rate,
@@ -161,18 +179,18 @@ export async function alertasTempoReal(u: Usuario, f: Filtros) {
         FROM gold.vw_frota_agora
        WHERE empresa_id = ${u.empresaId}
          AND ultima_leitura_em >= now() - ${JANELA_AO_VIVO}::interval
-         AND score_atual >= 60 ${dims}
+         AND score_atual >= ${LIMITE_EM_RISCO} ${dims}
        ORDER BY score_atual DESC
        LIMIT 8
     `,
     sql`
       SELECT a.id, a.disparado_em, a.tipo::text AS tipo, a.gravidade::text AS gravidade,
-             a.status::text AS status, a.score_fadiga, m.codigo, m.nome_exibicao AS nome
+             a.status::text AS status, a.score_fadiga, a.motorista_id, m.codigo, m.nome_exibicao AS nome
         FROM (${alertasComDimensoes(sql, u.empresaId)}) a
         JOIN silver.motoristas m ON m.id = a.motorista_id
-       WHERE a.disparado_em >= now() - interval '6 hours' ${dims}
+       WHERE a.disparado_em >= now() - make_interval(hours => ${horas}) ${graves} ${dims}
        ORDER BY a.disparado_em DESC
-       LIMIT 12
+       LIMIT ${limite}
     `,
   ]);
 
@@ -204,7 +222,9 @@ export async function alertasTempoReal(u: Usuario, f: Filtros) {
       score: e.score_fadiga,
       codigo: e.codigo,
       nome: e.nome,
+      motoristaId: e.motorista_id,
     })),
+    janela: { horas, graves: !!opcoes.graves },
   };
 }
 

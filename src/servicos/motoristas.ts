@@ -20,9 +20,20 @@ const uuid = z.string().uuid("id inválido");
 
 export async function aoVivo(u: Usuario, f: Filtros) {
   const sql = db();
+  // Ocorrências da frota no período e a rota do turno mais recente: base dos
+  // filtros que as outras telas aplicam ao abrir esta (ver ?filtro= no front).
   const linhas = await sql`
     SELECT f.*, f.ultima_leitura_em >= now() - ${JANELA_AO_VIVO}::interval AS ativo,
-           r.score_fadiga_medio AS score_medio_30d
+           r.score_fadiga_medio AS score_medio_30d,
+           (SELECT COUNT(*) FROM silver.incidentes i
+             WHERE i.motorista_id = f.motorista_id AND i.origem = 'interno'
+               AND (i.ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN ${f.periodo.de} AND ${f.periodo.ate})::int AS ocorrencias,
+           (SELECT COUNT(*) FROM silver.incidentes i
+             WHERE i.motorista_id = f.motorista_id AND i.origem = 'interno' AND i.relacionado_sonolencia
+               AND (i.ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN ${f.periodo.de} AND ${f.periodo.ate})::int AS ocorrencias_sono,
+           (SELECT t.origem_cidade || ' → ' || t.destino_cidade FROM silver.turnos t
+             WHERE t.motorista_id = f.motorista_id AND t.origem_cidade IS NOT NULL
+             ORDER BY t.iniciado_em DESC LIMIT 1) AS rota
       FROM gold.vw_frota_agora f
       LEFT JOIN gold.mv_ranking_motoristas r ON r.motorista_id = f.motorista_id
      WHERE f.empresa_id = ${u.empresaId} ${condicoesDimensao(sql, f)}
@@ -52,6 +63,9 @@ export async function aoVivo(u: Usuario, f: Filtros) {
     ultimaLeituraEm: m.ultima_leitura_em,
     ativo: m.ativo,
     scoreMedio30d: m.score_medio_30d,
+    ocorrencias: m.ocorrencias as number,
+    ocorrenciasSono: m.ocorrencias_sono as number,
+    rota: m.rota as string | null,
   }));
 }
 
@@ -274,8 +288,8 @@ export const schemaAcao = z.object({
   alertaId: z.string().uuid().optional(),
 });
 
-/** Ações que contam como "alerta atendido" no indicador do ROI. */
-const ACOES_QUE_ATENDEM = ["pausa_obrigatoria", "encerramento_turno", "troca_motorista"];
+/** Ações que contam como "alerta atendido" (mesma lista de gold.mv_alertas_agregados). */
+const ACOES_QUE_ATENDEM = ["pausa_obrigatoria", "contato_telefonico", "encerramento_turno", "troca_motorista"];
 
 export async function registrarAcao(u: Usuario, id: string, dados: z.infer<typeof schemaAcao>) {
   uuid.parse(id);

@@ -23,7 +23,8 @@ export const handler = criarRoteador("dashboard", {
     });
   },
   kpis: async ({ usuario, query }) => ok(await servico.kpis(usuario, lerFiltros(query))),
-  alertasTempoReal: async ({ usuario, query }) => ok(await servico.alertasTempoReal(usuario, lerFiltros(query))),
+  alertasTempoReal: async ({ usuario, query }) =>
+    ok(await servico.alertasTempoReal(usuario, lerFiltros(query), { horas: Number(query.horas) || undefined, graves: query.gravidade === "graves" })),
   tendenciaTurno: async ({ usuario, query }) => ok(await servico.tendenciaTurno(usuario, lerFiltros(query, "7d"))),
   evolucaoFadiga: async ({ usuario, query }) => ok(await servico.evolucaoFadiga(usuario, lerFiltros(query, "30d"))),
   rotas: async ({ usuario, query }) => ok(await servico.rotas(usuario, lerFiltros(query))),

@@ -2,12 +2,18 @@
 
 export type NivelRisco = "low" | "medium" | "high" | "critical" | "sem_dados";
 
-/** Mesma escala de gold.fn_nivel_risco e do front. */
+/** Score a partir do qual o motorista está "em risco" (estado sonolento do modelo). */
+export const LIMITE_EM_RISCO = 70;
+
+/**
+ * Mesma escala de gold.fn_nivel_risco e do front: baixo < 40 (alerta), médio
+ * 40-70 (fadiga), alto 70-90 (sonolento), crítico >= 90.
+ */
 export function nivelRisco(score: number | null | undefined): NivelRisco {
   if (score === null || score === undefined || Number.isNaN(score)) return "sem_dados";
-  if (score < 35) return "low";
-  if (score < 60) return "medium";
-  if (score < 80) return "high";
+  if (score < 40) return "low";
+  if (score < LIMITE_EM_RISCO) return "medium";
+  if (score < 90) return "high";
   return "critical";
 }
 

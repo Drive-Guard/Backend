@@ -130,7 +130,10 @@ async function valorHoraViagens(sql: Sql, empresaId: string) {
   return { valorHora: v?.valor_hora as number | null, viagens: (v?.viagens as number) ?? 0 };
 }
 
-/** Alertas graves (30 dias) com ação de pausa, troca ou encerramento registrada. */
+/**
+ * Alertas graves (alta ou crítica, 30 dias) atendidos: com pausa, contato,
+ * troca ou encerramento registrado. Mesma definição dos relatórios e insights.
+ */
 async function alertasAtendidos(sql: Sql, empresaId: string) {
   const [a] = await sql`
     SELECT COALESCE(SUM(total), 0)::int AS graves, COALESCE(SUM(atendidos), 0)::int AS atendidos

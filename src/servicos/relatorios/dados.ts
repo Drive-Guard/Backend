@@ -70,7 +70,9 @@ function dimensoesSilver(sql: Sql, c: Contexto) {
 function alertasFiltrados(sql: Sql, c: Contexto, de = c.f.periodo.de, ate = c.f.periodo.ate) {
   return sql`
     SELECT a.*, m.codigo, m.nome_exibicao AS motorista, v.placa, v.tipo::text AS tipo_veiculo,
-           EXISTS (SELECT 1 FROM silver.acoes_motorista ac WHERE ac.alerta_id = a.id) AS atendido
+           -- Mesma definição de "atendido" do ROI (gold.mv_alertas_agregados).
+           EXISTS (SELECT 1 FROM silver.acoes_motorista ac WHERE ac.alerta_id = a.id
+                     AND ac.tipo IN ('pausa_obrigatoria', 'contato_telefonico', 'encerramento_turno', 'troca_motorista')) AS atendido
       FROM silver.alertas a
       JOIN silver.motoristas m ON m.id = a.motorista_id
       LEFT JOIN silver.dim_uf uf ON uf.uf = m.regiao_uf
@@ -138,7 +140,7 @@ export async function resumo(c: Contexto) {
   const sql = db();
   const [[contagens], [anterior], [frota], serie, distribuicao, calc, kpis] = await Promise.all([
     sql`SELECT COUNT(*)::int AS eventos, COUNT(*) FILTER (WHERE gravidade IN ('alta', 'critica'))::int AS graves,
-               COUNT(*) FILTER (WHERE atendido)::int AS atendidos
+               COUNT(*) FILTER (WHERE atendido AND gravidade IN ('alta', 'critica'))::int AS atendidos
           FROM (${alertasFiltrados(sql, c)}) x`,
     sql`SELECT COUNT(*)::int AS eventos FROM (${alertasFiltrados(sql, c, c.f.periodo.anteriorDe, c.f.periodo.anteriorAte)}) x`,
     sql`SELECT COUNT(DISTINCT motorista_id)::int AS motoristas, COUNT(DISTINCT veiculo_id)::int AS veiculos,
@@ -161,7 +163,9 @@ export async function resumo(c: Contexto) {
       eventosAnterior: anterior.eventos,
       variacaoEventos: variacaoPercentual(contagens.eventos, anterior.eventos),
       alertasGraves: contagens.graves,
+      // Graves atendidos: o percentual é o indicador, o número é o detalhe.
       alertasAtendidos: contagens.atendidos,
+      percentualAtendidos: contagens.graves ? arred((contagens.atendidos / contagens.graves) * 100, 0) : null,
       motoristasAnalisados: frota.motoristas,
       veiculosAnalisados: frota.veiculos,
       turnos: frota.turnos,
@@ -252,7 +256,11 @@ async function executivo(c: Contexto): Promise<Secao[]> {
         { rotulo: "Fadiga média", valor: formatarNumero(p.fadigaMedia, 1), detalhe: variacao(p.variacaoFadiga) },
         { rotulo: "Alertas", valor: formatarNumero(p.alertas), detalhe: variacao(p.variacaoAlertas) },
         { rotulo: "Alertas graves", valor: formatarNumero(p.alertasGraves) },
-        { rotulo: "Alertas atendidos", valor: formatarNumero(res.kpis.alertasAtendidos) },
+        {
+          rotulo: "Graves atendidos",
+          valor: res.kpis.percentualAtendidos !== null ? `${formatarNumero(res.kpis.percentualAtendidos)}%` : "—",
+          detalhe: `${formatarNumero(res.kpis.alertasAtendidos)} de ${formatarNumero(res.kpis.alertasGraves)} graves`,
+        },
         { rotulo: "Motoristas analisados", valor: formatarNumero(res.kpis.motoristasAnalisados) },
         { rotulo: "Veículos analisados", valor: formatarNumero(res.kpis.veiculosAnalisados) },
         { rotulo: "Horas dirigidas", valor: formatarNumero(p.horasDirigidas, 0) },
