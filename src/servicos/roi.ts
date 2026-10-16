@@ -33,6 +33,16 @@ export interface Parametro {
   personalizado: boolean;
 }
 
+/**
+ * Rótulo neutro para quando a empresa troca o valor: a descrição padrão
+ * cita o estudo de onde veio o número, que deixa de valer.
+ */
+const DESCRICAO_PERSONALIZADA: Record<string, string> = {
+  fracao_sono_conservador: "Fração dos acidentes ligada ao sono (cenário conservador).",
+  fracao_sono_realista: "Fração dos acidentes ligada ao sono (cenário realista).",
+  eficacia_alerta: "Redução dos eventos de fadiga com o alarme ligado.",
+};
+
 export async function parametros(empresaId: string, sql: Sql = db()): Promise<Record<string, Parametro>> {
   const linhas = await sql`
     SELECT p.chave, p.valor AS padrao, p.unidade, p.descricao, p.fonte, p.url_fonte, p.referencia, p.editavel,
@@ -49,10 +59,11 @@ export async function parametros(empresaId: string, sql: Sql = db()): Promise<Re
       valor: personalizado ? (l.da_empresa as number) : (l.padrao as number | null),
       valorPadrao: l.padrao as number | null,
       unidade: l.unidade as string,
-      descricao: l.descricao as string,
+      descricao: personalizado ? (DESCRICAO_PERSONALIZADA[l.chave as string] ?? (l.descricao as string)) : (l.descricao as string),
       fonte: personalizado ? ((l.fonte_empresa as string) ?? "Informado pela empresa") : (l.fonte as string | null),
       urlFonte: personalizado ? null : (l.url_fonte as string | null),
-      referencia: l.referencia as string | null,
+      // A referência (ano do estudo) é do valor padrão.
+      referencia: personalizado ? null : (l.referencia as string | null),
       editavel: l.editavel as boolean,
       personalizado,
     };
@@ -218,6 +229,9 @@ export async function calcular(empresaId: string, sql: Sql = db()) {
     nota:
       "Estimativa anual. \"Acidente evitado\" supõe que o alerta emitido na cabine, seguido de pausa, evita o acidente " +
       "que a literatura associa ao sono. Os cenários usam a fração de sono registrada pela PRF (conservador, " +
-      "subnotificada) e a medida em investigação aprofundada (realista).",
+      "subnotificada) e " +
+      (p.fracao_sono_realista?.personalizado
+        ? `a fração ligada ao sono no histórico da própria frota (realista: ${p.fracao_sono_realista.fonte}).`
+        : "a medida em investigação aprofundada (realista)."),
   };
 }

@@ -7,6 +7,7 @@ import { autor, type Usuario } from "../lib/auth";
 import { db } from "../lib/db";
 import { condicoesDimensao, type Filtros, ROTULO_TIPO_VEICULO } from "../lib/filtros";
 import { naoEncontrado } from "../lib/http";
+import { formatarNumero } from "../lib/numeros";
 import { JANELA_AO_VIVO, ROTULO_ALERTA } from "./dashboard";
 
 async function garantirDaEmpresa(u: Usuario, motoristaId: string) {
@@ -211,7 +212,7 @@ export function regrasMotorista(d: Awaited<ReturnType<typeof detalhe>>): Insight
   }
   if (ult.scoreMedio !== null && ult.mediaDaFrota !== null && ult.scoreMedio > ult.mediaDaFrota * 1.15) {
     lista.push({ nivel: "medium", icone: "frota", titulo: "Acima da média da frota",
-      descricao: `Fadiga média de ${ult.scoreMedio} em 30 dias, contra ${ult.mediaDaFrota} da frota.`, origem: "regra" });
+      descricao: `Fadiga média de ${formatarNumero(ult.scoreMedio, 1)} em 30 dias, contra ${formatarNumero(ult.mediaDaFrota, 1)} da frota.`, origem: "regra" });
   }
   if (ult.alertasGraves >= 5) {
     lista.push({ nivel: "high", icone: "alerta", titulo: "Alertas graves recorrentes",
