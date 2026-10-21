@@ -10,7 +10,9 @@
  * demonstração). Assim o teste não precisa de senha de usuário; a validação
  * do token pelo autorizador é conferida à parte (401 sem token).
  *
- * O que o teste cria leva o prefixo E2E e fica marcado como inativo/cancelado.
+ * O que o teste cria leva o prefixo E2E e é apagado no fim de cada passo
+ * (a exclusão também é testada): a dashboard da apresentação não fica com
+ * cadastros de teste.
  */
 
 import { rotas, type FuncaoApi } from "../src/rotas";
@@ -295,14 +297,16 @@ async function principal() {
     const h = esperar(await g(`/cadastros/dispositivos/${c.id}/historico`), 200);
     esperar(await chamar("gestor", "POST", `/cadastros/dispositivos/${c.id}/desvincular`, undefined, { motivo: "E2E" }), 200);
     esperar(await chamar("gestor", "PUT", `/cadastros/dispositivos/${c.id}`, undefined, { codigo: `E2E-${sufixo}`, status: "inativo" }), 200);
-    esperar(await chamar("gestor", "PUT", `/cadastros/veiculos/${veiculoId}`, undefined, { tipo: "caminhao", modelo: "E2E", ativo: false }), 200);
     esperar(await g("/cadastros/dispositivos"), 200);
+    esperar(await chamar("gestor", "DELETE", `/cadastros/dispositivos/${c.id}`), 200);
+    esperar(await chamar("gestor", "DELETE", `/cadastros/veiculos/${veiculoId}`), 200);
     return `${h.length} vínculo(s)`;
   });
   await passo("Motorista: cadastrar e editar", async () => {
     const m = esperar(await chamar("gestor", "POST", "/cadastros/motoristas", undefined, { codigo: `E2E-${sufixo}`, nome: "Motorista E2E", idade: 40, regiaoUf: "SP" }), 201);
     esperar(await chamar("gestor", "PUT", `/cadastros/motoristas/${m.id}`, undefined, { nome: "Motorista E2E", status: "inativo" }), 200);
     esperar(await g("/cadastros/motoristas"), 200);
+    esperar(await chamar("gestor", "DELETE", `/cadastros/motoristas/${m.id}`), 200);
   });
   let rotaId = "";
   await passo("Rota: cadastrar e editar", async () => {
@@ -318,6 +322,8 @@ async function principal() {
     const v = esperar(await chamar("gestor", "POST", "/cadastros/viagens", undefined, corpo), 201);
     esperar(await chamar("gestor", "PUT", `/cadastros/viagens/${v.id}`, undefined, { ...corpo, status: "cancelada" }), 200);
     esperar(await g("/cadastros/viagens"), 200);
+    esperar(await chamar("gestor", "DELETE", `/cadastros/viagens/${v.id}`), 200);
+    esperar(await chamar("gestor", "DELETE", `/cadastros/rotas/${rotaId}`), 200);
   });
   await passo("Parâmetro do ROI: alterar e restaurar", async () => {
     esperar(await g("/cadastros/parametros-roi"), 200);
