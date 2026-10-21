@@ -82,13 +82,15 @@ export function lerFiltros(query: Record<string, string | undefined>, periodoPad
  * macro_regiao, regiao_uf e tipo_veiculo (mv_kpis_diarios, mv_alertas_agregados,
  * mv_fadiga_por_tempo_direcao, vw_frota_agora, mv_ranking_motoristas).
  */
-export function condicoesDimensao(sql: Sql, f: Filtros) {
+export function condicoesDimensao(sql: Sql, f: Filtros, alias?: string) {
+  // Com JOIN entre duas dessas views a coluna fica ambígua: passe o alias.
+  const col = (nome: string) => (alias ? sql`${sql(alias)}.${sql(nome)}` : sql(nome));
   const regiao = !f.regiao
     ? sql``
     : f.regiao.tipo === "macro"
-      ? sql`AND macro_regiao = ${f.regiao.valor}`
-      : sql`AND regiao_uf = ${f.regiao.valor}`;
-  const veiculo = f.tipoVeiculo ? sql`AND tipo_veiculo = ${f.tipoVeiculo}` : sql``;
+      ? sql`AND ${col("macro_regiao")} = ${f.regiao.valor}`
+      : sql`AND ${col("regiao_uf")} = ${f.regiao.valor}`;
+  const veiculo = f.tipoVeiculo ? sql`AND ${col("tipo_veiculo")} = ${f.tipoVeiculo}` : sql``;
   return sql`${regiao} ${veiculo}`;
 }
 

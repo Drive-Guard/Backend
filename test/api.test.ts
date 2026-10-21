@@ -5,6 +5,8 @@ import { db } from "../src/lib/db";
 import { handler as alertas } from "../src/funcoes/alertas";
 import { handler as dashboard } from "../src/funcoes/dashboard";
 import { handler as motoristas } from "../src/funcoes/motoristas";
+import { handler as relatorios } from "../src/funcoes/relatorios";
+import { rotas } from "../src/rotas";
 import { corpoJson, evento } from "./ajuda";
 
 afterAll(async () => {
@@ -90,6 +92,31 @@ describe("dashboard", () => {
     expect(r.body!.startsWith("﻿Código;Motorista")).toBe(true);
   });
 
+  it("toda leitura aceita região e tipo de veículo juntos (sem coluna ambígua)", async () => {
+    const handlers: Record<string, (e: never) => Promise<{ statusCode?: number; body?: string }>> = { dashboard, motoristas, alertas, relatorios };
+    const leituras = rotas.filter((r) => r.metodo === "GET" && !r.caminho.includes("{") && handlers[r.funcao]);
+    expect(leituras.length).toBeGreaterThan(15);
+    for (const query of [{ regiao: "Sudeste", tipo_veiculo: "caminhao" }, { regiao: "SP", tipo_veiculo: "onibus" }]) {
+      for (const r of leituras) {
+        const resp = await handlers[r.funcao](evento(`GET ${r.caminho}`, { papel: "admin", query: { ...query, de: "2026-09-01", ate: "2026-09-20" } }));
+        expect(resp.statusCode, `${r.caminho} ${JSON.stringify(query)}: ${resp.body?.slice(0, 200)}`).toBeLessThan(500);
+      }
+    }
+  });
+
+  it("rotas obedecem a região e o tipo, e cada uma leva a motoristas que a fizeram", async () => {
+    const todas = corpoJson(await dashboard(evento("GET /dashboard/rotas", { query: { periodo: "30d" } })));
+    const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    const de = new Date(Date.now() - 29 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    for (const query of [{ regiao: "Sudeste" }, { tipo_veiculo: "onibus" }]) {
+      const rotas = corpoJson(await dashboard(evento("GET /dashboard/rotas", { query: { ...query, periodo: "30d" } })));
+      expect(rotas.length).toBeLessThan(todas.length);
+      const motoristasDoFiltro = corpoJson(await motoristas(evento("GET /motoristas/historico", { query: { ...query, de, ate: hoje } })));
+      const feitas = new Set(motoristasDoFiltro.flatMap((m: { rotas: string[] }) => m.rotas));
+      for (const r of rotas) expect(feitas, `${r.origemCidade} → ${r.destinoCidade}`).toContain(`${r.origemCidade} → ${r.destinoCidade}`);
+    }
+  });
+
   it("rota fora do manifesto dá 404", async () => {
     expect((await dashboard(evento("GET /nao-existe"))).statusCode).toBe(404);
   });
@@ -113,6 +140,18 @@ describe("motoristas e alertas", () => {
     expect(ins.length).toBeGreaterThan(0);
   });
 
+  it("lista ao vivo filtrada bate com os KPIs ao vivo (região e tipo de veículo)", async () => {
+    for (const query of [{ regiao: "Sudeste" }, { regiao: "SP" }, { tipo_veiculo: "onibus" }, { regiao: "Sul", tipo_veiculo: "caminhao" }]) {
+      const r = await motoristas(evento("GET /motoristas/ao-vivo", { query }));
+      expect(r.statusCode, JSON.stringify(query)).toBe(200);
+      const lista = corpoJson(r) as { ativo: boolean; risco: string }[];
+      const k = corpoJson(await dashboard(evento("GET /dashboard/kpis", { query }))).aoVivo;
+      expect(lista).toHaveLength(k.motoristasMonitorados);
+      expect(lista.filter((m) => m.ativo)).toHaveLength(k.motoristasAtivos);
+      expect(lista.filter((m) => m.ativo && (m.risco === "high" || m.risco === "critical"))).toHaveLength(k.motoristasEmRisco);
+    }
+  });
+
   it("turnos anteriores: lista do intervalo e turnos do motorista", async () => {
     const hoje = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
     const semana = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
@@ -124,6 +163,9 @@ describe("motoristas e alertas", () => {
     const turnos = corpoJson(await motoristas(evento("GET /motoristas/{id}/turnos", { params: { id: m.motoristaId }, query: { de: semana, ate: hoje } })));
     expect(turnos).toHaveLength(m.turnos);
     expect(turnos[0].turnoId).toBe(m.ultimoTurnoId);
+    // Rotas do intervalo, as mesmas da lista de turnos.
+    const rotasDosTurnos = new Set(turnos.filter((t: { origem: string | null }) => t.origem).map((t: { origem: string; destino: string }) => `${t.origem} → ${t.destino}`));
+    expect(new Set(m.rotas)).toEqual(rotasDosTurnos);
     // A curva aceita o turno escolhido.
     const curva = corpoJson(await motoristas(evento("GET /motoristas/{id}/curva-turno", { params: { id: m.motoristaId }, query: { turno_id: turnos.at(-1).turnoId } })));
     expect(curva.turno.turnoId).toBe(turnos.at(-1).turnoId);

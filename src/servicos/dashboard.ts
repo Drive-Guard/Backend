@@ -204,7 +204,7 @@ export async function alertasTempoReal(u: Usuario, f: Filtros, opcoes: { horas?:
         ) ac ON TRUE
         LEFT JOIN silver.usuarios au ON au.id = ac.realizado_por
         LEFT JOIN silver.usuarios ru ON ru.id = a.reconhecido_por
-       WHERE a.disparado_em >= now() - make_interval(hours => ${horas}) ${graves} ${dims}
+       WHERE a.disparado_em >= now() - make_interval(hours => ${horas}) ${graves} ${condicoesDimensao(sql, f, "a")}
        ORDER BY a.disparado_em DESC
        LIMIT ${limite}
     `,
@@ -382,13 +382,13 @@ export async function rotas(u: Usuario, f: Filtros) {
         SELECT rota_id, SUM(soma_score) AS soma, SUM(leituras) AS leituras, SUM(alertas) AS alertas,
                SUM(alertas_graves) AS graves, SUM(turnos) AS turnos
           FROM gold.mv_rotas_desempenho
-         WHERE empresa_id = ${u.empresaId} AND dia BETWEEN ${f.periodo.de} AND ${f.periodo.ate}
+         WHERE empresa_id = ${u.empresaId} AND dia BETWEEN ${f.periodo.de} AND ${f.periodo.ate} ${condicoesDimensao(sql, f)}
          GROUP BY rota_id
     ),
     anterior AS (
         SELECT rota_id, SUM(soma_score) / NULLIF(SUM(leituras), 0) AS fadiga
           FROM gold.mv_rotas_desempenho
-         WHERE empresa_id = ${u.empresaId} AND dia BETWEEN ${f.periodo.anteriorDe} AND ${f.periodo.anteriorAte}
+         WHERE empresa_id = ${u.empresaId} AND dia BETWEEN ${f.periodo.anteriorDe} AND ${f.periodo.anteriorAte} ${condicoesDimensao(sql, f)}
          GROUP BY rota_id
     ),
     janela_prf AS (

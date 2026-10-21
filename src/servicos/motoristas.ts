@@ -36,7 +36,7 @@ export async function aoVivo(u: Usuario, f: Filtros) {
              ORDER BY t.iniciado_em DESC LIMIT 1) AS rota
       FROM gold.vw_frota_agora f
       LEFT JOIN gold.mv_ranking_motoristas r ON r.motorista_id = f.motorista_id
-     WHERE f.empresa_id = ${u.empresaId} ${condicoesDimensao(sql, f)}
+     WHERE f.empresa_id = ${u.empresaId} ${condicoesDimensao(sql, f, "f")}
      ORDER BY ativo DESC, f.score_atual DESC
   `;
   return linhas.map((m) => ({
@@ -80,7 +80,7 @@ export async function historico(u: Usuario, f: Filtros) {
   const sql = db();
   const linhas = await sql`
     WITH t AS (
-        SELECT t.id, t.motorista_id, t.iniciado_em, t.veiculo_id,
+        SELECT t.id, t.motorista_id, t.iniciado_em, t.veiculo_id, t.origem_cidade, t.destino_cidade,
                EXTRACT(EPOCH FROM (COALESCE(t.finalizado_em, (SELECT MAX(l.registrado_em) FROM silver.leituras_fadiga l WHERE l.turno_id = t.id), t.iniciado_em)
                                    - t.iniciado_em)) / 3600.0 AS horas
           FROM silver.turnos t
@@ -107,7 +107,10 @@ export async function historico(u: Usuario, f: Filtros) {
                COALESCE(SUM(a.graves), 0)::int AS alertas_graves,
                MAX(t.iniciado_em) AS ultimo_turno_em,
                (array_agg(t.id ORDER BY t.iniciado_em DESC))[1] AS ultimo_turno_id,
-               (array_agg(t.veiculo_id ORDER BY t.iniciado_em DESC))[1] AS veiculo_id
+               (array_agg(t.veiculo_id ORDER BY t.iniciado_em DESC))[1] AS veiculo_id,
+               -- Rotas feitas no intervalo: o atalho "rota" da visão gerencial filtra por elas.
+               COALESCE(array_agg(DISTINCT t.origem_cidade || ' → ' || t.destino_cidade)
+                          FILTER (WHERE t.origem_cidade IS NOT NULL AND t.destino_cidade IS NOT NULL), '{}') AS rotas
           FROM t
           JOIN silver.motoristas m ON m.id = t.motorista_id
           LEFT JOIN silver.dim_uf uf ON uf.uf = m.regiao_uf
@@ -147,6 +150,7 @@ export async function historico(u: Usuario, f: Filtros) {
     ocorrencias: m.ocorrencias as number,
     ultimoTurnoEm: m.ultimo_turno_em as string,
     ultimoTurnoId: m.ultimo_turno_id as string,
+    rotas: m.rotas as string[],
   }));
 }
 
