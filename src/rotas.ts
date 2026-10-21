@@ -58,6 +58,7 @@ export const rotas: Rota[] = [
   { metodo: "GET", caminho: "/motoristas/{id}/insights", funcao: "motoristas", acao: "insights", papeis: TODOS, descricao: "Insights do motorista" },
   { metodo: "GET", caminho: "/motoristas/{id}/alertas", funcao: "motoristas", acao: "alertas", papeis: TODOS, descricao: "Alertas recentes do motorista" },
   { metodo: "POST", caminho: "/motoristas/{id}/acoes", funcao: "motoristas", acao: "registrarAcao", papeis: TODOS, descricao: "Registra uma ação (ex.: pausa solicitada)" },
+  { metodo: "DELETE", caminho: "/motoristas/{id}/acoes/{acaoId}", funcao: "motoristas", acao: "desfazerAcao", papeis: TODOS, descricao: "Desfaz uma ação registrada por engano (15 min)" },
   { metodo: "POST", caminho: "/motoristas/{id}/ocorrencias", funcao: "motoristas", acao: "registrarOcorrencia", papeis: TODOS, descricao: "Registra uma ocorrência interna" },
 
   // ------------------------------------------------------------ alertas

@@ -23,9 +23,9 @@ describe("ROI", () => {
     const r = await roi.calcular(EMPRESA_DEMO);
     expect(r.disponivel).toBe(true);
     // 16 câmeras do seed (outros testes podem instalar mais) numa frota de 20.
-    expect(r.cobertura.frotaTotal).toBe(20);
-    expect(r.cobertura.veiculosComCamera).toBeGreaterThanOrEqual(16);
-    const cobertura = r.cobertura.veiculosComCamera / 20;
+    expect(r.cobertura.frotaTotal).toBe(50);
+    expect(r.cobertura.veiculosComCamera).toBeGreaterThanOrEqual(40);
+    const cobertura = r.cobertura.veiculosComCamera / 50;
     expect(r.cobertura.fracao).toBeCloseTo(cobertura, 3);
     const p = Object.fromEntries(r.parametros.map((x) => [x.chave, x.valor]));
     const c = r.cenarios.conservador;

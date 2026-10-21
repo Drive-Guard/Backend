@@ -17,7 +17,7 @@ describe("dashboard", () => {
   it("/me devolve papel e empresa", async () => {
     const r = await dashboard(evento("GET /me", { papel: "admin" }));
     expect(r.statusCode).toBe(200);
-    expect(corpoJson(r)).toMatchObject({ papel: "admin", empresa: { nome: "DriveGuard Demo", frotaTotal: 20 } });
+    expect(corpoJson(r)).toMatchObject({ papel: "admin", empresa: { nome: "DriveGuard Demo", frotaTotal: 50 } });
   });
 
   it("KPIs com período anterior para comparar", async () => {
@@ -250,6 +250,38 @@ describe("motoristas e alertas", () => {
     const [antiga] = await sql`SELECT id FROM silver.acoes_motorista WHERE alerta_id = ${a2}`;
     expect((await desfazer(a2, antiga.id)).statusCode).toBe(409);
     expect((await eventoDe(a2)).resposta.podeDesfazer).toBe(false);
+  });
+
+  it("ações da central pelo painel do motorista: alerta aberto, histórico e desfazer", async () => {
+    const sql = db();
+    const [al] = await sql`
+      INSERT INTO silver.alertas (motorista_id, disparado_em, tipo, gravidade, score_fadiga, mensagem)
+      SELECT id, now() - interval '4 minutes', 'microssono', 'critica', 91, 'teste do painel'
+        FROM silver.motoristas WHERE codigo = 'DRV-1008'
+      RETURNING id, motorista_id`;
+    const id = al.motorista_id as string;
+    const detalhe = async () => corpoJson(await motoristas(evento("GET /motoristas/{id}", { params: { id } })));
+
+    expect((await detalhe()).alertaAberto).toMatchObject({ id: al.id, gravidade: "critica" });
+    // A ação responde ao alerta aberto, com a opção e a observação.
+    const r = await motoristas(evento("POST /motoristas/{id}/acoes", { params: { id }, corpo: { tipo: "pausa_obrigatoria", detalhe: "30 min", observacao: "parou no posto" } }));
+    expect(r.statusCode).toBe(201);
+    let d = await detalhe();
+    expect(d.alertaAberto).toBeNull();
+    expect(d.acoesRecentes[0]).toMatchObject({ tipo: "pausa_obrigatoria", detalhe: "30 min", observacao: "parou no posto", alertaId: al.id, podeDesfazer: true });
+
+    // Treinamento é de depois: não responde a alerta.
+    const [al2] = await sql`
+      INSERT INTO silver.alertas (motorista_id, disparado_em, tipo, gravidade, score_fadiga, mensagem)
+      VALUES (${id}, now() - interval '1 minute', 'bocejo_excessivo', 'alta', 78, 'teste do painel 2') RETURNING id`;
+    await motoristas(evento("POST /motoristas/{id}/acoes", { params: { id }, corpo: { tipo: "treinamento" } }));
+    expect((await sql`SELECT status::text AS s FROM silver.alertas WHERE id = ${al2.id}`)[0].s).toBe("aberto");
+
+    // Desfazer a pausa devolve o primeiro alerta para aguardando.
+    d = await detalhe();
+    const pausa = d.acoesRecentes.find((a: { tipo: string }) => a.tipo === "pausa_obrigatoria");
+    expect((await motoristas(evento("DELETE /motoristas/{id}/acoes/{acaoId}", { params: { id, acaoId: pausa.id } }))).statusCode).toBe(200);
+    expect((await sql`SELECT status::text AS s FROM silver.alertas WHERE id = ${al.id}`)[0].s).toBe("aberto");
   });
 
   it("uma empresa nunca vê a frota da outra", async () => {

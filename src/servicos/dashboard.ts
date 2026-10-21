@@ -236,8 +236,9 @@ export async function alertasTempoReal(u: Usuario, f: Filtros, opcoes: { horas?:
         LEFT JOIN LATERAL (
             SELECT json_agg(json_build_object(
                        'id', ac.id, 'tipo', ac.tipo::text, 'detalhe', ac.detalhe,
-                       -- O texto automático das versões anteriores não é observação de ninguém.
-                       'observacao', CASE WHEN ac.descricao LIKE 'Resposta ao alerta de %' THEN NULL ELSE ac.descricao END,
+                       -- Observação é o que alguém da central escreveu (não o texto automático do seed
+                       -- nem o das versões anteriores).
+                       'observacao', CASE WHEN ac.realizado_por IS NULL OR ac.descricao LIKE 'Resposta ao alerta de %' THEN NULL ELSE ac.descricao END,
                        'em', ac.realizado_em, 'por', au.nome) ORDER BY ac.realizado_em) AS historico
               FROM silver.acoes_motorista ac
               LEFT JOIN silver.usuarios au ON au.id = ac.realizado_por

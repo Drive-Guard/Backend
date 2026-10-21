@@ -15,6 +15,7 @@ export const handler = criarRoteador("motoristas", {
   alertas: async ({ usuario, params, query }) => ok(await servico.alertas(usuario, params.id, Number(query.limite ?? 20))),
   registrarAcao: async ({ usuario, params, corpo: texto, base64 }) =>
     criado(await servico.registrarAcao(usuario, params.id, corpo(texto, servico.schemaAcao, base64))),
+  desfazerAcao: async ({ usuario, params }) => ok(await servico.desfazerAcao(usuario, params.id, params.acaoId)),
   registrarOcorrencia: async ({ usuario, params, corpo: texto, base64 }) =>
     criado(await servico.registrarOcorrencia(usuario, params.id, corpo(texto, servico.schemaOcorrencia, base64))),
 });

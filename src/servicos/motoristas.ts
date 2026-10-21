@@ -6,9 +6,10 @@ import { z } from "zod";
 import { autor, type Usuario } from "../lib/auth";
 import { db } from "../lib/db";
 import { condicoesDimensao, type Filtros, ROTULO_TIPO_VEICULO } from "../lib/filtros";
-import { naoEncontrado } from "../lib/http";
+import { conflito, naoEncontrado } from "../lib/http";
 import { formatarNumero, nivelRisco } from "../lib/numeros";
-import { ACOES_QUE_ATENDEM, JANELA_AO_VIVO, ROTULO_ALERTA } from "./dashboard";
+import { desfazerResposta } from "./alertas";
+import { ACOES_QUE_ATENDEM, JANELA_AO_VIVO, MINUTOS_PARA_DESFAZER, ROTULO_ALERTA } from "./dashboard";
 
 async function garantirDaEmpresa(u: Usuario, motoristaId: string) {
   const sql = db();
@@ -200,7 +201,7 @@ export async function turnos(u: Usuario, id: string, f: Filtros) {
 export async function detalhe(u: Usuario, id: string) {
   uuid.parse(id);
   const sql = db();
-  const [[r], [vivo], [frota], ocorrencias] = await Promise.all([
+  const [[r], [vivo], [frota], ocorrencias, acoes, [alertaAberto]] = await Promise.all([
     sql`SELECT * FROM gold.mv_ranking_motoristas WHERE motorista_id = ${id} AND empresa_id = ${u.empresaId}`,
     sql`SELECT * FROM gold.vw_frota_agora WHERE motorista_id = ${id} AND empresa_id = ${u.empresaId}`,
     sql`SELECT ROUND(AVG(score_fadiga_medio), 1) AS media FROM gold.mv_ranking_motoristas
@@ -211,6 +212,21 @@ export async function detalhe(u: Usuario, id: string) {
           FROM silver.incidentes
          WHERE motorista_id = ${id} AND empresa_id = ${u.empresaId} AND origem = 'interno'
          ORDER BY ocorrido_em DESC LIMIT 10`,
+    // Últimas ações da central com este motorista (painel "Ações da central").
+    sql`SELECT ac.id, ac.tipo::text AS tipo, ac.detalhe,
+               CASE WHEN ac.realizado_por IS NULL OR ac.descricao LIKE 'Resposta ao alerta de %' THEN NULL ELSE ac.descricao END AS observacao,
+               ac.realizado_em, us.nome AS por, ac.alerta_id, al.tipo::text AS alerta_tipo,
+               ac.realizado_em >= now() - make_interval(mins => ${MINUTOS_PARA_DESFAZER}) AS pode_desfazer
+          FROM silver.acoes_motorista ac
+          LEFT JOIN silver.usuarios us ON us.id = ac.realizado_por
+          LEFT JOIN silver.alertas al ON al.id = ac.alerta_id
+         WHERE ac.motorista_id = ${id} AND ac.realizado_em >= now() - interval '7 days'
+         ORDER BY ac.realizado_em DESC LIMIT 6`,
+    // O alerta que a próxima ação responde (o mesmo critério de registrarAcao).
+    sql`SELECT id, tipo::text AS tipo, gravidade::text AS gravidade, disparado_em, score_fadiga
+          FROM silver.alertas
+         WHERE motorista_id = ${id} AND status = 'aberto' AND disparado_em >= now() - interval '2 hours'
+         ORDER BY (gravidade IN ('alta', 'critica')) DESC, disparado_em DESC LIMIT 1`,
   ]);
   if (!r) throw naoEncontrado("Motorista");
 
@@ -267,6 +283,26 @@ export async function detalhe(u: Usuario, id: string) {
       relacionadoSonolencia: o.relacionado_sonolencia as boolean,
       descricao: o.descricao as string | null,
     })),
+    acoesRecentes: acoes.map((a) => ({
+      id: a.id as string,
+      tipo: a.tipo as string,
+      detalhe: a.detalhe as string | null,
+      observacao: a.observacao as string | null,
+      em: a.realizado_em as string,
+      por: a.por as string | null,
+      alertaId: a.alerta_id as string | null,
+      alertaRotulo: a.alerta_tipo ? (ROTULO_ALERTA[a.alerta_tipo as string] ?? (a.alerta_tipo as string)) : null,
+      podeDesfazer: a.pode_desfazer as boolean,
+    })),
+    alertaAberto: alertaAberto
+      ? {
+          id: alertaAberto.id as string,
+          rotulo: ROTULO_ALERTA[alertaAberto.tipo as string] ?? (alertaAberto.tipo as string),
+          gravidade: alertaAberto.gravidade as string,
+          disparadoEm: alertaAberto.disparado_em as string,
+          score: alertaAberto.score_fadiga as number | null,
+        }
+      : null,
   };
 }
 
@@ -417,10 +453,26 @@ export async function alertas(u: Usuario, id: string, limite = 20) {
 }
 
 export const schemaAcao = z.object({
-  tipo: z.enum(["pausa_obrigatoria", "contato_telefonico", "troca_motorista", "treinamento", "advertencia", "encerramento_turno"]),
+  tipo: z.enum([
+    "pausa_obrigatoria",
+    "contato_telefonico",
+    "tentativa_contato",
+    "troca_motorista",
+    "encerramento_turno",
+    "monitorando",
+    "treinamento",
+    "advertencia",
+  ]),
+  /** Opção escolhida: duração da pausa, canal do contato... */
+  detalhe: z.string().trim().max(100).optional(),
+  /** Observação da central (antes "descricao", que continua aceito). */
+  observacao: z.string().trim().max(500).optional(),
   descricao: z.string().max(1000).optional(),
   alertaId: z.string().uuid().optional(),
 });
+
+/** Ações que falam com o motorista ou mudam a viagem: respondem ao alerta aberto. */
+const RESPONDEM_ALERTA = [...ACOES_QUE_ATENDEM, "tentativa_contato", "monitorando"];
 
 
 export async function registrarAcao(u: Usuario, id: string, dados: z.infer<typeof schemaAcao>) {
@@ -432,23 +484,27 @@ export async function registrarAcao(u: Usuario, id: string, dados: z.infer<typeo
     const [turno] = await tx`
       SELECT id FROM silver.turnos WHERE motorista_id = ${id} AND status = 'em_andamento' LIMIT 1
     `;
-    // Sem alerta informado, a ação responde ao alerta grave mais recente ainda aberto (2 h).
+    // Sem alerta informado, a ação responde ao alerta grave mais recente ainda
+    // aberto (2 h). Treinamento e advertência são de depois: não respondem a alerta.
     const [alerta] = dados.alertaId
       ? await tx`SELECT id FROM silver.alertas WHERE id = ${dados.alertaId} AND motorista_id = ${id}`
-      : await tx`SELECT id FROM silver.alertas
-                  WHERE motorista_id = ${id} AND status = 'aberto'
-                    AND disparado_em >= now() - interval '2 hours'
-                  ORDER BY (gravidade IN ('alta', 'critica')) DESC, disparado_em DESC LIMIT 1`;
+      : RESPONDEM_ALERTA.includes(dados.tipo)
+        ? await tx`SELECT id FROM silver.alertas
+                    WHERE motorista_id = ${id} AND status = 'aberto'
+                      AND disparado_em >= now() - interval '2 hours'
+                    ORDER BY (gravidade IN ('alta', 'critica')) DESC, disparado_em DESC LIMIT 1`
+        : [];
     if (dados.alertaId && !alerta) throw naoEncontrado("Alerta");
 
     const [acao] = await tx`
-      INSERT INTO silver.acoes_motorista (motorista_id, turno_id, alerta_id, tipo, descricao, realizado_por)
+      INSERT INTO silver.acoes_motorista (motorista_id, turno_id, alerta_id, tipo, detalhe, descricao, realizado_por)
       VALUES (${id}, ${turno?.id ?? null}, ${alerta?.id ?? null}, ${dados.tipo}::silver.tipo_acao,
-              ${dados.descricao ?? null}, ${autor(u)})
+              ${dados.detalhe || null}, ${dados.observacao || dados.descricao || null}, ${autor(u)})
       RETURNING id, tipo::text AS tipo, realizado_em, alerta_id, turno_id
     `;
 
-    if (alerta && ACOES_QUE_ATENDEM.includes(dados.tipo)) {
+    // Como na resposta pelo alerta: só a tentativa sem sucesso o mantém aguardando.
+    if (alerta && dados.tipo !== "tentativa_contato") {
       await tx`
         UPDATE silver.alertas
            SET status = 'reconhecido', reconhecido_por = ${autor(u)}, reconhecido_em = COALESCE(reconhecido_em, now())
@@ -457,6 +513,24 @@ export async function registrarAcao(u: Usuario, id: string, dados: z.infer<typeo
     }
     return acao;
   });
+}
+
+/** Desfaz uma ação registrada por engano (até MINUTOS_PARA_DESFAZER depois). */
+export async function desfazerAcao(u: Usuario, id: string, acaoId: string) {
+  uuid.parse(id);
+  uuid.parse(acaoId);
+  await garantirDaEmpresa(u, id);
+  const sql = db();
+  const [acao] = await sql`
+    SELECT alerta_id, realizado_em >= now() - make_interval(mins => ${MINUTOS_PARA_DESFAZER}) AS recente
+      FROM silver.acoes_motorista WHERE id = ${acaoId} AND motorista_id = ${id}
+  `;
+  if (!acao) throw naoEncontrado("Ação");
+  // Ligada a um alerta: o alerta volta a aguardar se ficar sem resposta.
+  if (acao.alerta_id) return desfazerResposta(u, acao.alerta_id as string, acaoId);
+  if (!acao.recente) throw conflito(`Só dá para desfazer nos primeiros ${MINUTOS_PARA_DESFAZER} minutos`);
+  await sql`DELETE FROM silver.acoes_motorista WHERE id = ${acaoId}`;
+  return { status: "desfeita" };
 }
 
 export const schemaOcorrencia = z.object({
