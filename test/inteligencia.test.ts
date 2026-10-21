@@ -30,9 +30,10 @@ describe("ROI", () => {
     const p = Object.fromEntries(r.parametros.map((x) => [x.chave, x.valor]));
     const c = r.cenarios.conservador;
     expect(c.acidentesPorSono).toBeCloseTo(p.acidentes_ano_frota! * p.fracao_sono_conservador!, 2);
-    expect(c.acidentesEvitados).toBeCloseTo(c.acidentesPorSono * p.eficacia_alerta! * cobertura, 2);
-    // As saídas vêm arredondadas; a conta exata usa os parâmetros.
+    // As saídas vêm arredondadas; a conta exata usa os parâmetros (multiplicar
+    // o acidentesPorSono já arredondado acumularia o erro do arredondamento).
     const evitados = p.acidentes_ano_frota! * p.fracao_sono_conservador! * p.eficacia_alerta! * cobertura;
+    expect(c.acidentesEvitados).toBeCloseTo(evitados, 2);
     expect(Math.abs(c.custoEvitado - evitados * r.custoMedioPorAcidente)).toBeLessThan(5);
     expect(c.horasParadaEvitadas).toBeCloseTo(evitados * p.horas_parada_por_acidente!, 1);
     expect(r.cenarios.realista.custoEvitado).toBeGreaterThan(c.custoEvitado);

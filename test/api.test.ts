@@ -129,6 +129,35 @@ describe("motoristas e alertas", () => {
     expect(curva.turno.turnoId).toBe(turnos.at(-1).turnoId);
   });
 
+  it("alertas recentes mostram a resposta da central e o resumo dos graves", async () => {
+    const sql = db();
+    // Alerta grave novo, aberto, de um motorista da demo.
+    const [grave] = await sql`
+      INSERT INTO silver.alertas (motorista_id, disparado_em, tipo, gravidade, score_fadiga, mensagem)
+      SELECT id, now() - interval '10 minutes', 'microssono', 'critica', 88, 'teste de resposta'
+        FROM silver.motoristas WHERE codigo = 'DRV-1002'
+      RETURNING id, motorista_id`;
+    const [outro] = await sql`
+      INSERT INTO silver.alertas (motorista_id, disparado_em, tipo, gravidade, score_fadiga, mensagem)
+      SELECT id, now() - interval '12 minutes', 'bocejo_excessivo', 'alta', 75, 'teste de falso alarme'
+        FROM silver.motoristas WHERE codigo = 'DRV-1004'
+      RETURNING id`;
+    const r = await motoristas(evento("POST /motoristas/{id}/acoes", { params: { id: grave.motorista_id }, corpo: { tipo: "contato_telefonico", alertaId: grave.id } }));
+    expect(r.statusCode).toBe(201);
+
+    const t = corpoJson(await dashboard(evento("GET /dashboard/alertas-tempo-real", { query: { horas: "24", gravidade: "graves" } })));
+    expect(t.respostas.graves).toBeGreaterThan(0);
+    expect(t.respostas.atendidos).toBeGreaterThan(0);
+    const ev = t.eventos.find((e: { id: string }) => e.id === grave.id);
+    expect(ev.resposta).toMatchObject({ tipo: "contato_telefonico" });
+
+    // Falso alarme sai da conta de atendidos e aparece como tal.
+    expect((await alertas(evento("PATCH /alertas/{id}", { params: { id: outro.id }, corpo: { status: "descartado" } }))).statusCode).toBe(200);
+    const depois = corpoJson(await dashboard(evento("GET /dashboard/alertas-tempo-real", { query: { horas: "24" } })));
+    const descartado = depois.eventos.find((e: { id: string }) => e.id === outro.id);
+    expect(descartado.resposta.tipo).toBe("falso_alarme");
+  });
+
   it("uma empresa nunca vê a frota da outra", async () => {
     const OUTRA = "00000000-0000-4000-8000-0000000000ff";
     const sql = db();

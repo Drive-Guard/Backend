@@ -8,7 +8,7 @@ import { db } from "../lib/db";
 import { condicoesDimensao, type Filtros, ROTULO_TIPO_VEICULO } from "../lib/filtros";
 import { naoEncontrado } from "../lib/http";
 import { formatarNumero, nivelRisco } from "../lib/numeros";
-import { JANELA_AO_VIVO, ROTULO_ALERTA } from "./dashboard";
+import { ACOES_QUE_ATENDEM, JANELA_AO_VIVO, ROTULO_ALERTA } from "./dashboard";
 
 async function garantirDaEmpresa(u: Usuario, motoristaId: string) {
   const sql = db();
@@ -418,8 +418,6 @@ export const schemaAcao = z.object({
   alertaId: z.string().uuid().optional(),
 });
 
-/** Ações que contam como "alerta atendido" (mesma lista de gold.mv_alertas_agregados). */
-const ACOES_QUE_ATENDEM = ["pausa_obrigatoria", "contato_telefonico", "encerramento_turno", "troca_motorista"];
 
 export async function registrarAcao(u: Usuario, id: string, dados: z.infer<typeof schemaAcao>) {
   uuid.parse(id);

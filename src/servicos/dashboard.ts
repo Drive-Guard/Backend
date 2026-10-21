@@ -169,13 +169,16 @@ export function agregadoPeriodo(sql: Sql, u: Usuario, f: Filtros, de: string, at
  * Motoristas em risco agora e alertas recentes. A janela (horas) e o filtro
  * de graves vêm dos atalhos de outras telas (ex.: "alertas nas últimas 24h").
  */
+/** Ações da central que contam como "alerta atendido" (mesma lista de gold.mv_alertas_agregados). */
+export const ACOES_QUE_ATENDEM = ["pausa_obrigatoria", "contato_telefonico", "encerramento_turno", "troca_motorista"];
+
 export async function alertasTempoReal(u: Usuario, f: Filtros, opcoes: { horas?: number; graves?: boolean } = {}) {
   const sql = db();
   const dims = condicoesDimensao(sql, f);
   const horas = Math.min(720, Math.max(1, Math.round(opcoes.horas ?? 6)));
   const graves = opcoes.graves ? sql`AND a.gravidade IN ('alta', 'critica')` : sql``;
   const limite = horas > 6 ? 100 : 12;
-  const [motoristas, eventos] = await Promise.all([
+  const [motoristas, eventos, [resumo]] = await Promise.all([
     sql`
       SELECT motorista_id, codigo, nome, score_atual, risco, tendencia, blink_rate,
              duracao_olhos_fechados_ms, horas_turno, tipo_veiculo, regiao_uf, placa,
@@ -187,14 +190,36 @@ export async function alertasTempoReal(u: Usuario, f: Filtros, opcoes: { horas?:
        ORDER BY score_atual DESC
        LIMIT 8
     `,
+    // A resposta da central a cada alerta: a primeira ação registrada (pausa,
+    // contato, encerramento) ou o descarte como falso alarme.
     sql`
       SELECT a.id, a.disparado_em, a.tipo::text AS tipo, a.gravidade::text AS gravidade,
-             a.status::text AS status, a.score_fadiga, a.motorista_id, m.codigo, m.nome_exibicao AS nome
+             a.status::text AS status, a.score_fadiga, a.motorista_id, m.codigo, m.nome_exibicao AS nome,
+             a.reconhecido_em, ru.nome AS reconhecido_por, ac.tipo AS acao_tipo, ac.realizado_em AS acao_em, au.nome AS acao_por
         FROM (${alertasComDimensoes(sql, u.empresaId)}) a
         JOIN silver.motoristas m ON m.id = a.motorista_id
+        LEFT JOIN LATERAL (
+            SELECT tipo::text AS tipo, realizado_em, realizado_por FROM silver.acoes_motorista
+             WHERE alerta_id = a.id ORDER BY realizado_em LIMIT 1
+        ) ac ON TRUE
+        LEFT JOIN silver.usuarios au ON au.id = ac.realizado_por
+        LEFT JOIN silver.usuarios ru ON ru.id = a.reconhecido_por
        WHERE a.disparado_em >= now() - make_interval(hours => ${horas}) ${graves} ${dims}
        ORDER BY a.disparado_em DESC
        LIMIT ${limite}
+    `,
+    // Graves da janela inteira (a lista mostra só os mais recentes): quantos já
+    // tiveram resposta e quantos ainda esperam.
+    sql`
+      SELECT COUNT(*)::int AS graves,
+             COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM silver.acoes_motorista ac
+                                             WHERE ac.alerta_id = a.id AND ac.tipo::text = ANY(${sql.array(ACOES_QUE_ATENDEM)})))::int AS atendidos,
+             COUNT(*) FILTER (WHERE a.status = 'aberto')::int AS aguardando,
+             COUNT(*) FILTER (WHERE a.status = 'descartado')::int AS descartados,
+             MIN(a.disparado_em) FILTER (WHERE a.status = 'aberto') AS aguardando_desde
+        FROM (${alertasComDimensoes(sql, u.empresaId)}) a
+       WHERE a.disparado_em >= now() - make_interval(hours => ${horas})
+         AND a.gravidade IN ('alta', 'critica') ${dims}
     `,
   ]);
 
@@ -227,7 +252,21 @@ export async function alertasTempoReal(u: Usuario, f: Filtros, opcoes: { horas?:
       codigo: e.codigo,
       nome: e.nome,
       motoristaId: e.motorista_id,
+      resposta: e.acao_tipo
+        ? { tipo: e.acao_tipo as string, em: e.acao_em as string, por: (e.acao_por as string | null) ?? null }
+        : e.status === "descartado"
+          ? { tipo: "falso_alarme", em: (e.reconhecido_em as string | null) ?? null, por: (e.reconhecido_por as string | null) ?? null }
+          : e.status !== "aberto"
+            ? { tipo: "visto", em: (e.reconhecido_em as string | null) ?? null, por: (e.reconhecido_por as string | null) ?? null }
+            : null,
     })),
+    respostas: {
+      graves: resumo.graves as number,
+      atendidos: resumo.atendidos as number,
+      aguardando: resumo.aguardando as number,
+      descartados: resumo.descartados as number,
+      aguardandoDesde: (resumo.aguardando_desde as string | null) ?? null,
+    },
     janela: { horas, graves: !!opcoes.graves },
   };
 }
