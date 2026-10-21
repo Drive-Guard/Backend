@@ -138,6 +138,11 @@ export async function kpis(u: Usuario, f: Filtros) {
       alertas: periodo.alertas,
       alertasAnterior: anterior.alertas,
       variacaoAlertas: variacaoPercentual(periodo.alertas, anterior.alertas),
+      // Alertas por 100 h ao volante: compara períodos mesmo com a frota
+      // mudando de tamanho (a contagem absoluta cresce junto com a frota).
+      alertasPor100h: porCemHoras(periodo.alertas, periodo.horas),
+      alertasPor100hAnterior: porCemHoras(anterior.alertas, anterior.horas),
+      variacaoAlertasPor100h: variacaoPercentual(porCemHoras(periodo.alertas, periodo.horas), porCemHoras(anterior.alertas, anterior.horas)),
       alertasGraves: periodo.alertas_graves,
       turnos: periodo.turnos,
       horasDirigidas: periodo.horas,
@@ -145,6 +150,10 @@ export async function kpis(u: Usuario, f: Filtros) {
       leituras: periodo.leituras,
     },
   };
+}
+
+export function porCemHoras(alertas: number, horas: number | null): number | null {
+  return horas && Number(horas) > 0 ? Math.round((alertas / Number(horas)) * 1000) / 10 : null;
 }
 
 export function agregadoPeriodo(sql: Sql, u: Usuario, f: Filtros, de: string, ate: string) {

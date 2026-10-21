@@ -11,6 +11,7 @@ export const handler = criarRoteador("motoristas", {
   turnos: async ({ usuario, params, query }) => ok(await servico.turnos(usuario, params.id, lerFiltros(query, "hoje"))),
   detalhe: async ({ usuario, params }) => ok(await servico.detalhe(usuario, params.id)),
   curvaTurno: async ({ usuario, params, query }) => ok(await servico.curvaTurno(usuario, params.id, query.turno_id)),
+  leiturasRecentes: async ({ usuario, params, query }) => ok(await servico.leiturasRecentes(usuario, params.id, Number(query.minutos ?? 15))),
   insights: async ({ usuario, params }) => ok(await servico.insights(usuario, params.id)),
   alertas: async ({ usuario, params, query }) => ok(await servico.alertas(usuario, params.id, Number(query.limite ?? 20))),
   registrarAcao: async ({ usuario, params, corpo: texto, base64 }) =>

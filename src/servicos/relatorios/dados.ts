@@ -254,7 +254,11 @@ async function executivo(c: Contexto): Promise<Secao[]> {
       titulo: "Indicadores do período",
       kpis: [
         { rotulo: "Fadiga média", valor: formatarNumero(p.fadigaMedia, 1), detalhe: variacao(p.variacaoFadiga) },
-        { rotulo: "Alertas", valor: formatarNumero(p.alertas), detalhe: variacao(p.variacaoAlertas) },
+        {
+          rotulo: "Alertas",
+          valor: formatarNumero(p.alertas),
+          detalhe: p.alertasPor100h !== null ? `${formatarNumero(p.alertasPor100h, 1)} por 100 h ao volante (${variacao(p.variacaoAlertasPor100h)})` : variacao(p.variacaoAlertas),
+        },
         { rotulo: "Alertas graves", valor: formatarNumero(p.alertasGraves) },
         {
           rotulo: "Graves atendidos",

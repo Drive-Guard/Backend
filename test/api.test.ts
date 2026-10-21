@@ -27,6 +27,8 @@ describe("dashboard", () => {
     expect(r.periodo.fadigaMedia).toBeGreaterThan(0);
     expect(r.periodo.fadigaMediaAnterior).toBeGreaterThan(0); // 8 semanas de histórico no seed
     expect(r.horarioCritico.inicio).toMatch(/^\d{2}:00$/);
+    // Taxa por 100 h ao volante: compara períodos com a frota mudando de tamanho.
+    expect(r.periodo.alertasPor100h).toBeCloseTo((r.periodo.alertas / r.periodo.horasDirigidas) * 100, 0);
   });
 
   it("filtro de região e tipo de veículo restringe os KPIs", async () => {
@@ -282,6 +284,28 @@ describe("motoristas e alertas", () => {
     const pausa = d.acoesRecentes.find((a: { tipo: string }) => a.tipo === "pausa_obrigatoria");
     expect((await motoristas(evento("DELETE /motoristas/{id}/acoes/{acaoId}", { params: { id, acaoId: pausa.id } }))).statusCode).toBe(200);
     expect((await sql`SELECT status::text AS s FROM silver.alertas WHERE id = ${al.id}`)[0].s).toBe("aberto");
+  });
+
+  it("leituras recentes, uma a uma, com os alertas do intervalo", async () => {
+    const sql = db();
+    const [m] = await sql`SELECT id FROM silver.motoristas WHERE codigo = 'DRV-1011'`;
+    const [t] = await sql`
+      INSERT INTO silver.turnos (motorista_id, device_id, iniciado_em) VALUES (${m.id}, 'dg-teste-agora', now() - interval '10 minutes')
+      RETURNING id`;
+    await sql`
+      INSERT INTO silver.leituras_fadiga (turno_id, motorista_id, device_id, registrado_em, score_fadiga, estado, ear)
+      SELECT ${t.id}, ${m.id}, 'dg-teste-agora', now() - make_interval(secs => s), 40 + (60 - s / 10), 'fadiga', 0.25
+        FROM generate_series(10, 590, 60) AS s`;
+    await sql`
+      INSERT INTO silver.alertas (turno_id, motorista_id, disparado_em, tipo, gravidade, score_fadiga, mensagem)
+      VALUES (${t.id}, ${m.id}, now() - interval '1 minute', 'microssono', 'critica', 95, 'teste agora')`;
+    const r = corpoJson(await motoristas(evento("GET /motoristas/{id}/leituras-recentes", { params: { id: m.id }, query: { minutos: "15" } })));
+    expect(r.minutos).toBe(15);
+    expect(r.leituras.length).toBeGreaterThanOrEqual(10);
+    const ts = r.leituras.map((l: { em: string }) => Date.parse(l.em));
+    expect(ts).toEqual([...ts].sort((a, b) => a - b));
+    expect(r.alertas.find((a: { rotulo: string }) => a.rotulo === "Microssono")).toBeTruthy();
+    await sql`DELETE FROM silver.turnos WHERE id = ${t.id}`;
   });
 
   it("uma empresa nunca vê a frota da outra", async () => {

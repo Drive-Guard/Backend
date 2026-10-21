@@ -358,6 +358,48 @@ export async function curvaTurno(u: Usuario, id: string, turnoId?: string) {
   };
 }
 
+/**
+ * As leituras dos últimos minutos, uma a uma, direto da Silver: o gráfico
+ * "agora" do painel do motorista (a curva do turno vem da Gold, por hora, e
+ * só atualiza a cada 5 min). Com os alertas do mesmo intervalo.
+ */
+export async function leiturasRecentes(u: Usuario, id: string, minutos = 15) {
+  uuid.parse(id);
+  await garantirDaEmpresa(u, id);
+  const janela = Math.min(60, Math.max(1, Math.round(Number(minutos) || 15)));
+  const sql = db();
+  const [leituras, alertas] = await Promise.all([
+    sql`SELECT registrado_em, score_fadiga, estado::text AS estado, perclos, ear, blink_rate
+          FROM silver.leituras_fadiga
+         WHERE motorista_id = ${id} AND registrado_em >= now() - make_interval(mins => ${janela})
+         ORDER BY registrado_em`,
+    sql`SELECT id, disparado_em, tipo::text AS tipo, gravidade::text AS gravidade, score_fadiga, status::text AS status
+          FROM silver.alertas
+         WHERE motorista_id = ${id} AND disparado_em >= now() - make_interval(mins => ${janela})
+         ORDER BY disparado_em`,
+  ]);
+  return {
+    minutos: janela,
+    leituras: leituras.map((l) => ({
+      em: l.registrado_em as string,
+      score: l.score_fadiga as number | null,
+      estado: l.estado as string,
+      perclos: l.perclos as number | null,
+      ear: l.ear as number | null,
+      blinkRate: l.blink_rate as number | null,
+    })),
+    alertas: alertas.map((a) => ({
+      id: a.id as string,
+      em: a.disparado_em as string,
+      tipo: a.tipo as string,
+      rotulo: ROTULO_ALERTA[a.tipo as string] ?? (a.tipo as string),
+      gravidade: a.gravidade as string,
+      score: a.score_fadiga as number | null,
+      status: a.status as string,
+    })),
+  };
+}
+
 export interface InsightMotorista {
   nivel: "low" | "medium" | "high" | "critical";
   icone: "alerta" | "pausa" | "tendencia" | "olho" | "reincidencia" | "ok" | "frota" | "ia";

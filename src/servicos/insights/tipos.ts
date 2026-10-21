@@ -25,6 +25,9 @@ export interface ContextoInsights {
     variacaoFadigaPercentual: number | null;
     alertasPeriodo: number;
     alertasPeriodoAnterior: number;
+    /** Alertas por 100 h ao volante: compare períodos por esta taxa (a frota mudou de tamanho). */
+    alertasPor100hPeriodo: number | null;
+    alertasPor100hPeriodoAnterior: number | null;
     alertasGravesPeriodo: number;
     alertasAbertosGraves: number;
     horasDirigidasPeriodo: number;

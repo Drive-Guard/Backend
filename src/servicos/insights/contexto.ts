@@ -134,6 +134,10 @@ export async function montarContexto(
       variacaoFadigaPercentual: variacaoPercentual(kpis.periodo.fadigaMedia, kpis.periodo.fadigaMediaAnterior),
       alertasPeriodo: kpis.periodo.alertas,
       alertasPeriodoAnterior: kpis.periodo.alertasAnterior,
+      // Use a taxa para comparar períodos: a frota cresceu (de 16 para 40
+      // motoristas), então a contagem absoluta de alertas sobe junto.
+      alertasPor100hPeriodo: kpis.periodo.alertasPor100h,
+      alertasPor100hPeriodoAnterior: kpis.periodo.alertasPor100hAnterior,
       alertasGravesPeriodo: kpis.periodo.alertasGraves,
       alertasAbertosGraves: (abertos[0]?.total as number) ?? 0,
       horasDirigidasPeriodo: kpis.periodo.horasDirigidas,

@@ -54,6 +54,7 @@ export const rotas: Rota[] = [
   { metodo: "GET", caminho: "/motoristas/historico", funcao: "motoristas", acao: "historico", papeis: TODOS, descricao: "Motoristas com turnos num intervalo passado" },
   { metodo: "GET", caminho: "/motoristas/{id}", funcao: "motoristas", acao: "detalhe", papeis: TODOS, descricao: "Indicadores de 30 dias e estado atual" },
   { metodo: "GET", caminho: "/motoristas/{id}/curva-turno", funcao: "motoristas", acao: "curvaTurno", papeis: TODOS, descricao: "Fadiga hora a hora no último turno (ou no turno escolhido)" },
+  { metodo: "GET", caminho: "/motoristas/{id}/leituras-recentes", funcao: "motoristas", acao: "leiturasRecentes", papeis: TODOS, descricao: "Leituras e alertas dos últimos minutos, uma a uma (gráfico ao vivo)" },
   { metodo: "GET", caminho: "/motoristas/{id}/turnos", funcao: "motoristas", acao: "turnos", papeis: TODOS, descricao: "Turnos do motorista num intervalo" },
   { metodo: "GET", caminho: "/motoristas/{id}/insights", funcao: "motoristas", acao: "insights", papeis: TODOS, descricao: "Insights do motorista" },
   { metodo: "GET", caminho: "/motoristas/{id}/alertas", funcao: "motoristas", acao: "alertas", papeis: TODOS, descricao: "Alertas recentes do motorista" },
