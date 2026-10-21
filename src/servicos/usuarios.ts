@@ -32,6 +32,7 @@ export const schemaNovoUsuario = z.object({
   papel: z.enum(PAPEIS),
 });
 export const schemaAtualizacaoUsuario = z.object({
+  nome: z.string().trim().min(2).max(120).optional(),
   papel: z.enum(PAPEIS).optional(),
   ativo: z.boolean().optional(),
 });
@@ -47,6 +48,7 @@ interface Provedor {
   criar(empresaId: string, d: z.infer<typeof schemaNovoUsuario>, senha: string): Promise<UsuarioDashboard>;
   obter(username: string): Promise<{ usuario: UsuarioDashboard; empresaId: string } | null>;
   definirPapel(username: string, papel: Papel): Promise<void>;
+  definirNome(username: string, nome: string): Promise<void>;
   ativar(username: string, ativo: boolean): Promise<void>;
   remover(username: string): Promise<void>;
   redefinirSenha(username: string, senha: string): Promise<void>;
@@ -141,6 +143,10 @@ function provedorCognito(): Provedor {
       }
       await (await c()).send(new AdminAddUserToGroupCommand({ UserPoolId: pool, Username: username, GroupName: papel }));
     },
+    async definirNome(username, nome) {
+      const { AdminUpdateUserAttributesCommand } = await sdk();
+      await (await c()).send(new AdminUpdateUserAttributesCommand({ UserPoolId: pool, Username: username, UserAttributes: [{ Name: "name", Value: nome }] }));
+    },
     async ativar(username, ativo) {
       const { AdminEnableUserCommand, AdminDisableUserCommand } = await sdk();
       await (await c()).send(ativo ? new AdminEnableUserCommand({ UserPoolId: pool, Username: username }) : new AdminDisableUserCommand({ UserPoolId: pool, Username: username }));
@@ -178,6 +184,9 @@ function provedorMemoria(): Provedor {
     async definirPapel(username, papel) {
       dados.get(username)!.usuario.papel = papel;
     },
+    async definirNome(username, nome) {
+      dados.get(username)!.usuario.nome = nome;
+    },
     async ativar(username, ativo) {
       dados.get(username)!.usuario.ativo = ativo;
     },
@@ -212,6 +221,7 @@ export async function atualizar(admin: Usuario, username: string, d: z.infer<typ
   if (alvo.email === admin.email && (d.ativo === false || (d.papel && d.papel !== "admin"))) {
     throw invalido("Você não pode desativar nem rebaixar o próprio usuário.");
   }
+  if (d.nome) await p().definirNome(username, d.nome);
   if (d.papel) await p().definirPapel(username, d.papel);
   if (d.ativo !== undefined) await p().ativar(username, d.ativo);
   return daEmpresa(admin, username);

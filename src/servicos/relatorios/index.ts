@@ -10,7 +10,7 @@
 
 import { z } from "zod";
 import { autor, type Usuario } from "../../lib/auth";
-import { gravar, gravarJson, linkTemporario } from "../../lib/arquivos";
+import { apagar, gravar, gravarJson, linkTemporario } from "../../lib/arquivos";
 import { db, type Sql } from "../../lib/db";
 import { naoEncontrado } from "../../lib/http";
 import { diaLocal, somarDias } from "../../lib/tempo";
@@ -136,6 +136,16 @@ export async function download(u: Usuario, id: string) {
   if (!r || r.status !== "pronto" || !r.s3_key) throw naoEncontrado("Relatório");
   const nome = nomeArquivo(r.tipo as TipoRelatorio, r.formato as Formato, r.criado_em as Date);
   return { url: await linkTemporario(r.s3_key as string, nome), nomeArquivo: nome, expiraEmSegundos: 900 };
+}
+
+/** Apaga o relatório gerado e o arquivo dele no S3. */
+export async function remover(u: Usuario, id: string) {
+  z.string().uuid().parse(id);
+  const sql = db();
+  const [r] = await sql`DELETE FROM silver.relatorios_gerados WHERE id = ${id} AND empresa_id = ${u.empresaId} RETURNING s3_key`;
+  if (!r) throw naoEncontrado("Relatório");
+  if (r.s3_key) await apagar(r.s3_key as string).catch(() => undefined);
+  return { resultado: "excluido" as const };
 }
 
 // ---------------------------------------------------------------------------

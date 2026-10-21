@@ -11,6 +11,7 @@ export const handler = criarRoteador("relatorios", {
   listar: async ({ usuario }) => ok(await servico.listar(usuario)),
   gerar: async ({ usuario, corpo: texto, base64 }) => criado(await servico.gerar(usuario, corpo(texto, servico.schemaPedido, base64))),
   download: async ({ usuario, params }) => ok(await servico.download(usuario, params.id)),
+  remover: async ({ usuario, params }) => ok(await servico.remover(usuario, params.id)),
   listarAgendamentos: async ({ usuario }) => ok(await agendamentos.listar(usuario)),
   criarAgendamento: async ({ usuario, corpo: texto, base64 }) =>
     criado(await agendamentos.criar(usuario, corpo(texto, agendamentos.schemaAgendamento, base64))),

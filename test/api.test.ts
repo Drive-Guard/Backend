@@ -113,6 +113,22 @@ describe("motoristas e alertas", () => {
     expect(ins.length).toBeGreaterThan(0);
   });
 
+  it("turnos anteriores: lista do intervalo e turnos do motorista", async () => {
+    const hoje = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+    const semana = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+    const lista = corpoJson(await motoristas(evento("GET /motoristas/historico", { query: { de: semana, ate: hoje } })));
+    expect(lista.length).toBeGreaterThan(5);
+    const m = lista[0];
+    expect(m.turnos).toBeGreaterThan(0);
+    expect(m.scoreMaximo).toBeGreaterThanOrEqual(m.scoreMedio);
+    const turnos = corpoJson(await motoristas(evento("GET /motoristas/{id}/turnos", { params: { id: m.motoristaId }, query: { de: semana, ate: hoje } })));
+    expect(turnos).toHaveLength(m.turnos);
+    expect(turnos[0].turnoId).toBe(m.ultimoTurnoId);
+    // A curva aceita o turno escolhido.
+    const curva = corpoJson(await motoristas(evento("GET /motoristas/{id}/curva-turno", { params: { id: m.motoristaId }, query: { turno_id: turnos.at(-1).turnoId } })));
+    expect(curva.turno.turnoId).toBe(turnos.at(-1).turnoId);
+  });
+
   it("uma empresa nunca vê a frota da outra", async () => {
     const OUTRA = "00000000-0000-4000-8000-0000000000ff";
     const sql = db();

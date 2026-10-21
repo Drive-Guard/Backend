@@ -15,7 +15,7 @@
  * servidor de dev processa a cadeia na hora.
  */
 
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { S3Client } from "@aws-sdk/client-s3";
 
@@ -72,6 +72,16 @@ export async function ler(chave: string, bucket?: string): Promise<Buffer> {
 
 export async function lerJson<T>(chave: string, bucket?: string): Promise<T> {
   return JSON.parse((await ler(chave, bucket)).toString("utf8")) as T;
+}
+
+export async function apagar(chave: string): Promise<void> {
+  const dir = DIR_LOCAL();
+  if (dir) {
+    rmSync(join(dir, chave), { force: true });
+    return;
+  }
+  const { DeleteObjectCommand } = await import("@aws-sdk/client-s3");
+  await (await cliente()).send(new DeleteObjectCommand({ Bucket: BUCKET(), Key: chave }));
 }
 
 export function existeLocal(chave: string): boolean {

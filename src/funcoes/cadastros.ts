@@ -16,11 +16,15 @@ export const handler = criarRoteador("cadastros", {
   criarMotorista: async ({ usuario, corpo: t, base64 }) => criado(await s.criarMotorista(usuario, corpo(t, s.schemaNovoMotorista, base64))),
   atualizarMotorista: async ({ usuario, params, corpo: t, base64 }) =>
     ok(await s.atualizarMotorista(usuario, params.id, corpo(t, s.schemaMotorista, base64))),
+  completarMotorista: async ({ usuario, params, corpo: t, base64 }) =>
+    ok(await s.completarMotorista(usuario, params.id, corpo(t, s.schemaCompletarMotorista, base64))),
+  excluirMotorista: async ({ usuario, params }) => ok(await s.excluirMotorista(usuario, params.id)),
 
   listarVeiculos: async ({ usuario }) => ok(await s.listarVeiculos(usuario)),
   criarVeiculo: async ({ usuario, corpo: t, base64 }) => criado(await s.criarVeiculo(usuario, corpo(t, s.schemaNovoVeiculo, base64))),
   atualizarVeiculo: async ({ usuario, params, corpo: t, base64 }) =>
     ok(await s.atualizarVeiculo(usuario, params.id, corpo(t, s.schemaVeiculo, base64))),
+  excluirVeiculo: async ({ usuario, params }) => ok(await s.excluirVeiculo(usuario, params.id)),
 
   listarDispositivos: async ({ usuario }) => ok(await s.listarDispositivos(usuario)),
   criarDispositivo: async ({ usuario, corpo: t, base64 }) =>
@@ -32,15 +36,20 @@ export const handler = criarRoteador("cadastros", {
   desvincularDispositivo: async ({ usuario, params, corpo: t, base64 }) =>
     ok(await s.desvincularDispositivo(usuario, params.id, corpo(t, motivo, base64).motivo)),
   historicoDispositivo: async ({ usuario, params }) => ok(await s.historicoDispositivo(usuario, params.id)),
+  excluirDispositivo: async ({ usuario, params }) => ok(await s.excluirDispositivo(usuario, params.id)),
+
+  operacao: async ({ usuario, corpo: t, base64 }) => criado(await s.operacao(usuario, corpo(t, s.schemaOperacao, base64))),
 
   listarRotas: async ({ usuario }) => ok(await s.listarRotas(usuario)),
   criarRota: async ({ usuario, corpo: t, base64 }) => criado(await s.criarRota(usuario, corpo(t, s.schemaRota, base64))),
   atualizarRota: async ({ usuario, params, corpo: t, base64 }) => ok(await s.atualizarRota(usuario, params.id, corpo(t, s.schemaRota, base64))),
+  excluirRota: async ({ usuario, params }) => ok(await s.excluirRota(usuario, params.id)),
 
   listarViagens: async ({ usuario, query }) => ok(await s.listarViagens(usuario, s.schemaFiltroViagens.parse(query))),
   criarViagem: async ({ usuario, corpo: t, base64 }) => criado(await s.criarViagem(usuario, corpo(t, s.schemaViagem, base64))),
   atualizarViagem: async ({ usuario, params, corpo: t, base64 }) =>
     ok(await s.atualizarViagem(usuario, params.id, corpo(t, s.schemaViagem, base64))),
+  excluirViagem: async ({ usuario, params }) => ok(await s.excluirViagem(usuario, params.id)),
 
   listarParametrosRoi: async ({ usuario }) => ok(await s.listarParametrosRoi(usuario)),
   definirParametroRoi: async ({ usuario, params, corpo: t, base64 }) =>

@@ -7,7 +7,7 @@ import { autor, type Usuario } from "../lib/auth";
 import { db } from "../lib/db";
 import { condicoesDimensao, type Filtros, ROTULO_TIPO_VEICULO } from "../lib/filtros";
 import { naoEncontrado } from "../lib/http";
-import { formatarNumero } from "../lib/numeros";
+import { formatarNumero, nivelRisco } from "../lib/numeros";
 import { JANELA_AO_VIVO, ROTULO_ALERTA } from "./dashboard";
 
 async function garantirDaEmpresa(u: Usuario, motoristaId: string) {
@@ -68,6 +68,128 @@ export async function aoVivo(u: Usuario, f: Filtros) {
     ocorrencias: m.ocorrencias as number,
     ocorrenciasSono: m.ocorrencias_sono as number,
     rota: m.rota as string | null,
+  }));
+}
+
+/**
+ * Turnos de um intervalo passado, por motorista: a lista da aba Motoristas
+ * quando o gestor escolhe "Ontem", "7 dias"... em vez de "Agora". O score vem
+ * da curva do turno (gold), os alertas de silver.alertas.
+ */
+export async function historico(u: Usuario, f: Filtros) {
+  const sql = db();
+  const linhas = await sql`
+    WITH t AS (
+        SELECT t.id, t.motorista_id, t.iniciado_em, t.veiculo_id,
+               EXTRACT(EPOCH FROM (COALESCE(t.finalizado_em, (SELECT MAX(l.registrado_em) FROM silver.leituras_fadiga l WHERE l.turno_id = t.id), t.iniciado_em)
+                                   - t.iniciado_em)) / 3600.0 AS horas
+          FROM silver.turnos t
+          JOIN silver.motoristas m ON m.id = t.motorista_id
+         WHERE m.empresa_id = ${u.empresaId} AND m.arquivado_em IS NULL
+           AND (t.iniciado_em AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN ${f.periodo.de} AND ${f.periodo.ate}
+    ),
+    c AS (
+        SELECT turno_id, SUM(soma_score) AS soma, SUM(leituras) AS n, MAX(score_fadiga_maximo) AS maximo
+          FROM gold.mv_curva_fadiga_turno WHERE turno_id IN (SELECT id FROM t) GROUP BY turno_id
+    ),
+    a AS (
+        SELECT turno_id, COUNT(*) AS alertas, COUNT(*) FILTER (WHERE gravidade IN ('alta', 'critica')) AS graves
+          FROM silver.alertas WHERE turno_id IN (SELECT id FROM t) GROUP BY turno_id
+    ),
+    por_motorista AS (
+        SELECT m.id AS motorista_id, m.codigo, m.nome_exibicao AS nome, m.idade, m.anos_experiencia,
+               COALESCE(m.regiao_uf, 'ND') AS regiao_uf, COALESCE(uf.macro_regiao, 'ND') AS macro_regiao,
+               COUNT(t.id)::int AS turnos,
+               ROUND(SUM(t.horas)::numeric, 1) AS horas,
+               ROUND(SUM(c.soma) / NULLIF(SUM(c.n), 0), 1) AS score_medio,
+               ROUND(MAX(c.maximo), 0) AS score_maximo,
+               COALESCE(SUM(a.alertas), 0)::int AS alertas,
+               COALESCE(SUM(a.graves), 0)::int AS alertas_graves,
+               MAX(t.iniciado_em) AS ultimo_turno_em,
+               (array_agg(t.id ORDER BY t.iniciado_em DESC))[1] AS ultimo_turno_id,
+               (array_agg(t.veiculo_id ORDER BY t.iniciado_em DESC))[1] AS veiculo_id
+          FROM t
+          JOIN silver.motoristas m ON m.id = t.motorista_id
+          LEFT JOIN silver.dim_uf uf ON uf.uf = m.regiao_uf
+          LEFT JOIN c ON c.turno_id = t.id
+          LEFT JOIN a ON a.turno_id = t.id
+         GROUP BY m.id, uf.macro_regiao
+    )
+    SELECT * FROM (
+        SELECT p.*, COALESCE(ve.tipo::text, 'nd') AS tipo_veiculo, ve.placa, d.codigo AS veiculo_codigo,
+               (SELECT COUNT(*) FROM silver.incidentes i
+                 WHERE i.motorista_id = p.motorista_id AND i.origem = 'interno'
+                   AND (i.ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN ${f.periodo.de} AND ${f.periodo.ate})::int AS ocorrencias,
+               gold.fn_nivel_risco(p.score_maximo) AS risco
+          FROM por_motorista p
+          LEFT JOIN silver.veiculos ve ON ve.id = p.veiculo_id
+          LEFT JOIN silver.vinculos_dispositivo_veiculo vd ON vd.veiculo_id = ve.id AND vd.fim IS NULL
+          LEFT JOIN silver.dispositivos d ON d.id = vd.dispositivo_id
+    ) x
+     WHERE TRUE ${condicoesDimensao(sql, f)}
+     ORDER BY score_maximo DESC NULLS LAST, nome
+  `;
+  return linhas.map((m) => ({
+    motoristaId: m.motorista_id as string,
+    codigo: m.codigo as string | null,
+    nome: m.nome as string,
+    regiao: m.regiao_uf as string,
+    tipoVeiculo: ROTULO_TIPO_VEICULO[m.tipo_veiculo as string] ?? m.tipo_veiculo,
+    placa: m.placa as string | null,
+    veiculoCodigo: m.veiculo_codigo as string | null,
+    turnos: m.turnos as number,
+    horas: m.horas as number | null,
+    scoreMedio: m.score_medio as number | null,
+    scoreMaximo: m.score_maximo as number | null,
+    risco: m.risco as string,
+    alertas: m.alertas as number,
+    alertasGraves: m.alertas_graves as number,
+    ocorrencias: m.ocorrencias as number,
+    ultimoTurnoEm: m.ultimo_turno_em as string,
+    ultimoTurnoId: m.ultimo_turno_id as string,
+  }));
+}
+
+/** Turnos do motorista no intervalo, do mais recente para o mais antigo. */
+export async function turnos(u: Usuario, id: string, f: Filtros) {
+  uuid.parse(id);
+  await garantirDaEmpresa(u, id);
+  const sql = db();
+  const linhas = await sql`
+    SELECT t.id, t.iniciado_em, t.finalizado_em, t.status::text AS status, t.origem_cidade, t.destino_cidade,
+           ve.placa, d.codigo AS veiculo_codigo,
+           ROUND(EXTRACT(EPOCH FROM (COALESCE(t.finalizado_em, c.ultima, t.iniciado_em) - t.iniciado_em)) / 3600.0, 1) AS horas,
+           c.score_medio, c.score_maximo,
+           (SELECT COUNT(*) FROM silver.alertas a WHERE a.turno_id = t.id)::int AS alertas,
+           (SELECT COUNT(*) FROM silver.alertas a WHERE a.turno_id = t.id AND a.gravidade IN ('alta', 'critica'))::int AS alertas_graves
+      FROM silver.turnos t
+      LEFT JOIN LATERAL (
+          SELECT ROUND(SUM(soma_score) / NULLIF(SUM(leituras), 0), 1) AS score_medio, ROUND(MAX(score_fadiga_maximo), 0) AS score_maximo,
+                 (SELECT MAX(l.registrado_em) FROM silver.leituras_fadiga l WHERE l.turno_id = t.id) AS ultima
+            FROM gold.mv_curva_fadiga_turno WHERE turno_id = t.id
+      ) c ON TRUE
+      LEFT JOIN silver.veiculos ve ON ve.id = t.veiculo_id
+      LEFT JOIN silver.dispositivos d ON d.id = t.dispositivo_id
+     WHERE t.motorista_id = ${id}
+       AND (t.iniciado_em AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN ${f.periodo.de} AND ${f.periodo.ate}
+     ORDER BY t.iniciado_em DESC
+     LIMIT 200
+  `;
+  return linhas.map((t) => ({
+    turnoId: t.id as string,
+    iniciadoEm: t.iniciado_em as string,
+    finalizadoEm: t.finalizado_em as string | null,
+    status: t.status as string,
+    origem: t.origem_cidade as string | null,
+    destino: t.destino_cidade as string | null,
+    placa: t.placa as string | null,
+    veiculoCodigo: t.veiculo_codigo as string | null,
+    horas: t.horas as number | null,
+    scoreMedio: t.score_medio as number | null,
+    scoreMaximo: t.score_maximo as number | null,
+    risco: nivelRisco(t.score_maximo === null ? null : Number(t.score_maximo)),
+    alertas: t.alertas as number,
+    alertasGraves: t.alertas_graves as number,
   }));
 }
 
