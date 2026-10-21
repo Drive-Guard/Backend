@@ -172,6 +172,40 @@ export function agregadoPeriodo(sql: Sql, u: Usuario, f: Filtros, de: string, at
 /** Ações da central que contam como "alerta atendido" (mesma lista de gold.mv_alertas_agregados). */
 export const ACOES_QUE_ATENDEM = ["pausa_obrigatoria", "contato_telefonico", "encerramento_turno", "troca_motorista"];
 
+/** Prazo para desfazer uma resposta da central dada por engano. */
+export const MINUTOS_PARA_DESFAZER = 15;
+
+export interface RespostaAlerta {
+  /** Id da ação, "falso_alarme" ou null (só "visto"). */
+  id: string | null;
+  tipo: string;
+  detalhe: string | null;
+  observacao: string | null;
+  em: string | null;
+  por: string | null;
+  podeDesfazer: boolean;
+}
+
+/** Ações registradas no alerta e o falso alarme, em ordem de horário. */
+function respostasDoAlerta(e: Record<string, unknown>): RespostaAlerta[] {
+  const recente = (em: string | null) => !!em && Date.now() - new Date(em).getTime() < MINUTOS_PARA_DESFAZER * 60_000;
+  const lista: RespostaAlerta[] = ((e.historico as Omit<RespostaAlerta, "podeDesfazer">[] | null) ?? []).map((r) => ({ ...r, podeDesfazer: recente(r.em) }));
+  if (e.status === "descartado") {
+    const em = ((e.resolvido_em ?? e.reconhecido_em) as Date | string | null) ?? null;
+    const iso = em instanceof Date ? em.toISOString() : em;
+    lista.push({
+      id: "falso_alarme",
+      tipo: "falso_alarme",
+      detalhe: (e.motivo_descarte as string | null) ?? null,
+      observacao: (e.observacao_descarte as string | null) ?? null,
+      em: iso,
+      por: (e.reconhecido_por as string | null) ?? null,
+      podeDesfazer: recente(iso),
+    });
+  }
+  return lista.sort((a, b) => (a.em ? Date.parse(a.em) : 0) - (b.em ? Date.parse(b.em) : 0));
+}
+
 export async function alertasTempoReal(u: Usuario, f: Filtros, opcoes: { horas?: number; graves?: boolean } = {}) {
   const sql = db();
   const dims = condicoesDimensao(sql, f);
@@ -190,19 +224,25 @@ export async function alertasTempoReal(u: Usuario, f: Filtros, opcoes: { horas?:
        ORDER BY score_atual DESC
        LIMIT 8
     `,
-    // A resposta da central a cada alerta: a primeira ação registrada (pausa,
-    // contato, encerramento) ou o descarte como falso alarme.
+    // As respostas da central a cada alerta, em ordem (não atendeu -> pausa...),
+    // e o descarte como falso alarme, com o motivo.
     sql`
       SELECT a.id, a.disparado_em, a.tipo::text AS tipo, a.gravidade::text AS gravidade,
              a.status::text AS status, a.score_fadiga, a.motorista_id, m.codigo, m.nome_exibicao AS nome,
-             a.reconhecido_em, ru.nome AS reconhecido_por, ac.tipo AS acao_tipo, ac.realizado_em AS acao_em, au.nome AS acao_por
+             a.reconhecido_em, ru.nome AS reconhecido_por, a.resolvido_em, a.motivo_descarte, a.observacao_descarte,
+             h.historico
         FROM (${alertasComDimensoes(sql, u.empresaId)}) a
         JOIN silver.motoristas m ON m.id = a.motorista_id
         LEFT JOIN LATERAL (
-            SELECT tipo::text AS tipo, realizado_em, realizado_por FROM silver.acoes_motorista
-             WHERE alerta_id = a.id ORDER BY realizado_em LIMIT 1
-        ) ac ON TRUE
-        LEFT JOIN silver.usuarios au ON au.id = ac.realizado_por
+            SELECT json_agg(json_build_object(
+                       'id', ac.id, 'tipo', ac.tipo::text, 'detalhe', ac.detalhe,
+                       -- O texto automático das versões anteriores não é observação de ninguém.
+                       'observacao', CASE WHEN ac.descricao LIKE 'Resposta ao alerta de %' THEN NULL ELSE ac.descricao END,
+                       'em', ac.realizado_em, 'por', au.nome) ORDER BY ac.realizado_em) AS historico
+              FROM silver.acoes_motorista ac
+              LEFT JOIN silver.usuarios au ON au.id = ac.realizado_por
+             WHERE ac.alerta_id = a.id
+        ) h ON TRUE
         LEFT JOIN silver.usuarios ru ON ru.id = a.reconhecido_por
        WHERE a.disparado_em >= now() - make_interval(hours => ${horas}) ${graves} ${condicoesDimensao(sql, f, "a")}
        ORDER BY a.disparado_em DESC
@@ -241,25 +281,30 @@ export async function alertasTempoReal(u: Usuario, f: Filtros, opcoes: { horas?:
       alertasHoje: m.alertas_hoje,
       ultimaLeituraEm: m.ultima_leitura_em,
     })),
-    eventos: eventos.map((e) => ({
-      id: e.id,
-      disparadoEm: e.disparado_em,
-      tipo: e.tipo,
-      rotulo: ROTULO_ALERTA[e.tipo as string] ?? e.tipo,
-      gravidade: e.gravidade,
-      status: e.status,
-      score: e.score_fadiga,
-      codigo: e.codigo,
-      nome: e.nome,
-      motoristaId: e.motorista_id,
-      resposta: e.acao_tipo
-        ? { tipo: e.acao_tipo as string, em: e.acao_em as string, por: (e.acao_por as string | null) ?? null }
-        : e.status === "descartado"
-          ? { tipo: "falso_alarme", em: (e.reconhecido_em as string | null) ?? null, por: (e.reconhecido_por as string | null) ?? null }
-          : e.status !== "aberto"
-            ? { tipo: "visto", em: (e.reconhecido_em as string | null) ?? null, por: (e.reconhecido_por as string | null) ?? null }
-            : null,
-    })),
+    eventos: eventos.map((e) => {
+      const historico = respostasDoAlerta(e);
+      return {
+        id: e.id,
+        disparadoEm: e.disparado_em,
+        tipo: e.tipo,
+        rotulo: ROTULO_ALERTA[e.tipo as string] ?? e.tipo,
+        gravidade: e.gravidade,
+        status: e.status,
+        score: e.score_fadiga,
+        codigo: e.codigo,
+        nome: e.nome,
+        motoristaId: e.motorista_id,
+        // A resposta mais recente resume o alerta; o histórico traz todas.
+        resposta:
+          historico.at(-1) ??
+          (e.status !== "aberto"
+            ? { id: null, tipo: "visto", detalhe: null, observacao: null, em: (e.reconhecido_em as string | null) ?? null, por: (e.reconhecido_por as string | null) ?? null, podeDesfazer: false }
+            : null),
+        historico,
+        atendido: historico.some((r) => ACOES_QUE_ATENDEM.includes(r.tipo)),
+        tentativas: historico.filter((r) => r.tipo === "tentativa_contato").length,
+      };
+    }),
     respostas: {
       graves: resumo.graves as number,
       atendidos: resumo.atendidos as number,

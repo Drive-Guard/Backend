@@ -108,7 +108,7 @@ describe("dashboard", () => {
     const todas = corpoJson(await dashboard(evento("GET /dashboard/rotas", { query: { periodo: "30d" } })));
     const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
     const de = new Date(Date.now() - 29 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-    for (const query of [{ regiao: "Sudeste" }, { tipo_veiculo: "onibus" }]) {
+    for (const query of [{ regiao: "Sudeste" }, { tipo_veiculo: "onibus" }] as Record<string, string>[]) {
       const rotas = corpoJson(await dashboard(evento("GET /dashboard/rotas", { query: { ...query, periodo: "30d" } })));
       expect(rotas.length).toBeLessThan(todas.length);
       const motoristasDoFiltro = corpoJson(await motoristas(evento("GET /motoristas/historico", { query: { ...query, de, ate: hoje } })));
@@ -141,7 +141,7 @@ describe("motoristas e alertas", () => {
   });
 
   it("lista ao vivo filtrada bate com os KPIs ao vivo (região e tipo de veículo)", async () => {
-    for (const query of [{ regiao: "Sudeste" }, { regiao: "SP" }, { tipo_veiculo: "onibus" }, { regiao: "Sul", tipo_veiculo: "caminhao" }]) {
+    for (const query of [{ regiao: "Sudeste" }, { regiao: "SP" }, { tipo_veiculo: "onibus" }, { regiao: "Sul", tipo_veiculo: "caminhao" }] as Record<string, string>[]) {
       const r = await motoristas(evento("GET /motoristas/ao-vivo", { query }));
       expect(r.statusCode, JSON.stringify(query)).toBe(200);
       const lista = corpoJson(r) as { ativo: boolean; risco: string }[];
@@ -198,6 +198,58 @@ describe("motoristas e alertas", () => {
     const depois = corpoJson(await dashboard(evento("GET /dashboard/alertas-tempo-real", { query: { horas: "24" } })));
     const descartado = depois.eventos.find((e: { id: string }) => e.id === outro.id);
     expect(descartado.resposta.tipo).toBe("falso_alarme");
+  });
+
+  it("respostas em sequência, em lote, falso alarme com motivo e desfazer", async () => {
+    const sql = db();
+    const novos = await sql`
+      INSERT INTO silver.alertas (motorista_id, disparado_em, tipo, gravidade, score_fadiga, mensagem)
+      SELECT m.id, now() - make_interval(mins => x.min), 'fechamento_prolongado', 'alta', 80, 'teste de respostas'
+        FROM silver.motoristas m, (VALUES (20), (15), (5)) AS x(min)
+       WHERE m.codigo = 'DRV-1006'
+      RETURNING id`;
+    const [a1, a2, a3] = novos.map((n) => n.id as string);
+    const responder = (id: string, corpo: unknown) => alertas(evento("POST /alertas/{id}/respostas", { papel: "operador", params: { id }, corpo }));
+    const desfazer = (id: string, respostaId: string) => alertas(evento("DELETE /alertas/{id}/respostas/{respostaId}", { params: { id, respostaId } }));
+    const eventoDe = async (id: string) =>
+      corpoJson(await dashboard(evento("GET /dashboard/alertas-tempo-real", { query: { horas: "1" } }))).eventos.find((e: { id: string }) => e.id === id);
+    const status = async (id: string) => (await sql`SELECT status::text AS s FROM silver.alertas WHERE id = ${id}`)[0].s;
+
+    // Não atendeu: registra a tentativa, o alerta segue aguardando.
+    expect((await responder(a1, { tipo: "tentativa_contato", detalhe: "telefone" })).statusCode).toBe(201);
+    expect(await status(a1)).toBe("aberto");
+    let ev = await eventoDe(a1);
+    expect(ev).toMatchObject({ tentativas: 1, atendido: false, resposta: { tipo: "tentativa_contato", detalhe: "telefone", podeDesfazer: true } });
+
+    // Pausa de 30 min para este e os outros abertos do motorista.
+    const lote = await responder(a1, { tipo: "pausa_obrigatoria", detalhe: "30 min", observacao: "parou no posto do km 80", outrosAbertos: true });
+    expect(corpoJson(lote)).toMatchObject({ aplicados: 3, atende: true });
+    for (const id of [a1, a2, a3]) expect(await status(id)).toBe("reconhecido");
+    ev = await eventoDe(a1);
+    expect(ev.historico.map((r: { tipo: string }) => r.tipo)).toEqual(["tentativa_contato", "pausa_obrigatoria"]);
+    expect(ev).toMatchObject({ atendido: true, resposta: { tipo: "pausa_obrigatoria", detalhe: "30 min", observacao: "parou no posto do km 80" } });
+
+    // Desfazer a pausa: só a tentativa sobra, o alerta volta a aguardar.
+    expect((await desfazer(a1, ev.resposta.id)).statusCode).toBe(200);
+    expect(await status(a1)).toBe("aberto");
+    expect(await status(a2)).toBe("reconhecido");
+
+    // Falso alarme exige motivo; com ele, o alerta sai da conta e não aceita ação.
+    expect((await responder(a3, { tipo: "falso_alarme" })).statusCode).toBe(400);
+    expect((await responder(a3, { tipo: "falso_alarme", motivo: "oculos", observacao: "óculos escuros" })).statusCode).toBe(201);
+    expect(await status(a3)).toBe("descartado");
+    ev = await eventoDe(a3);
+    expect(ev.resposta).toMatchObject({ id: "falso_alarme", tipo: "falso_alarme", detalhe: "oculos", observacao: "óculos escuros" });
+    expect((await responder(a3, { tipo: "contato_telefonico" })).statusCode).toBe(409);
+    // Desfeito, volta ao que as ações deixaram (a pausa do lote).
+    expect((await desfazer(a3, "falso_alarme")).statusCode).toBe(200);
+    expect(await status(a3)).toBe("reconhecido");
+
+    // Passado o prazo, a resposta vira histórico.
+    await sql`UPDATE silver.acoes_motorista SET realizado_em = now() - interval '20 minutes' WHERE alerta_id = ${a2}`;
+    const [antiga] = await sql`SELECT id FROM silver.acoes_motorista WHERE alerta_id = ${a2}`;
+    expect((await desfazer(a2, antiga.id)).statusCode).toBe(409);
+    expect((await eventoDe(a2)).resposta.podeDesfazer).toBe(false);
   });
 
   it("uma empresa nunca vê a frota da outra", async () => {

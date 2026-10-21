@@ -63,6 +63,8 @@ export const rotas: Rota[] = [
   // ------------------------------------------------------------ alertas
   { metodo: "GET", caminho: "/alertas", funcao: "alertas", acao: "listar", papeis: TODOS, descricao: "Alertas da frota" },
   { metodo: "PATCH", caminho: "/alertas/{id}", funcao: "alertas", acao: "atualizar", papeis: TODOS, descricao: "Reconhece, resolve ou descarta um alerta" },
+  { metodo: "POST", caminho: "/alertas/{id}/respostas", funcao: "alertas", acao: "responder", papeis: TODOS, descricao: "Registra a resposta da central (pausa, contato, falso alarme...)" },
+  { metodo: "DELETE", caminho: "/alertas/{id}/respostas/{respostaId}", funcao: "alertas", acao: "desfazerResposta", papeis: TODOS, descricao: "Desfaz uma resposta dada por engano (15 min)" },
 
   // --------------------------------------------------------- relatórios
   { metodo: "GET", caminho: "/relatorios/resumo", funcao: "relatorios", acao: "resumo", papeis: GESTAO, descricao: "KPIs, gráficos e resumo inteligente do período" },
