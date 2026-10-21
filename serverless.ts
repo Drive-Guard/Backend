@@ -142,9 +142,9 @@ const config: AWS = {
       memorySize: 1024,
       events: [{ schedule: "rate(15 minutes)" }],
     }),
-    relatorioEnviar: worker("relatorioEnviar", "Envia o relatório por e-mail (SES) ou registra o fallback", {
+    relatorioEnviar: worker("relatorioEnviar", "Envia o relatório por e-mail (Gmail/SMTP ou SES) ou registra o fallback", {
       timeout: 30,
-      environment: { EMAIL_REMETENTE: ssm("email_remetente") },
+      environment: { EMAIL_REMETENTE: ssm("email_remetente"), SMTP_USUARIO: ssm("smtp_usuario"), SMTP_SENHA: ssm("smtp_senha") },
       events: [aoCriarArquivo("relatorios/envios/")],
     }),
     relatorioStatus: worker("relatorioStatus", "Grava no banco o resultado do envio", {
